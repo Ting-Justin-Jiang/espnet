@@ -105,7 +105,8 @@ The 7B model trains with FSDP. Parameters, gradients and AdamW states are
 sharded; every transformer layer recomputes its activations; parameters and
 buffers stay float32 (bfloat16 buffers would round Mimi's codebooks) while
 autocast computes in bfloat16; `FSDPClipGradNorm` clips the gradient norm
-over all shards, which Lightning's own clipping does not do under FSDP. The
+over all shards, which Lightning's own clipping does not do under FSDP. On
+3 GH200 (96 GB each), four 100 s windows a GPU took about 73 GB. The
 checkpoint with the lowest validation loss, `valid.loss.ave_1best.pth`, is
 read by inference as `model.lm_checkpoint`.
 

@@ -1,11 +1,12 @@
-# Full-Duplex-Bench v1.0 with Moshi
+# Full-Duplex-Bench v1.0 with Moshi and PersonaPlex
 
 [Full-Duplex-Bench](https://github.com/DanielLin94144/Full-Duplex-Bench)
 (Lin et al., 2025) measures turn-taking in full-duplex dialogue: whether a
 model keeps quiet through the user's pauses and back-channels, takes the turn
 when the user is done, and yields when interrupted. This recipe runs the
-released Moshi on its v1.0 test sets and scores it with the benchmark's own
-rules. See `egs3/TEMPLATE/duplex/README.md` for the system.
+released Moshi and PersonaPlex on its v1.0 test sets and scores them with
+the benchmark's own rules. See `egs3/TEMPLATE/duplex/README.md` for the
+system.
 
 | Test set | Task | Samples | Audio |
 | :-- | :-- | --: | --: |
@@ -30,6 +31,11 @@ python run.py --stages infer --inference_config conf/inference.yaml
 # 3) Score (GPU, see Requirements)
 python run.py --stages measure \
     --inference_config conf/inference.yaml --metrics_config conf/metrics.yaml
+
+# PersonaPlex: the same, with its config (accept its license on the Hub first)
+python run.py --stages infer measure \
+    --inference_config conf/tuning/inference_personaplex.yaml \
+    --metrics_config conf/metrics.yaml
 ```
 
 `infer` runs one GPU worker by default, at about 0.3 times real time on a
@@ -118,3 +124,38 @@ The median frame took 23.5 to 23.6 ms on every test set, under a third of the
 The published run differs in ways this recipe does not reproduce (its server
 implementation and version, real-time transport, an unseeded draw), and the
 gap is larger than both the sampling uncertainty and the spread over seeds.
+
+## PersonaPlex
+
+`conf/tuning/inference_personaplex.yaml` runs `nvidia/personaplex-7b-v1`
+with the voice prompt `NATF2.pt` (the example of NVIDIA's README; the paper
+does not say which voice its Full-Duplex-Bench run used) and, for each test
+set, the role prompt NVIDIA's README gives for its category: "You enjoy
+having a good conversation." for pause handling, backchannel and
+turn-taking, the teacher prompt for user interruption. Sampling follows
+NVIDIA's offline script; the run is one seeded draw (42424242). The last
+column bootstraps the samples (95%).
+
+| Task | Score | Published PersonaPlex | ESPnet3 PersonaPlex | 95% CI |
+| :-- | :-- | --: | --: | :-- |
+| Pause handling, synthetic | TOR ↓ | 0.584 | 0.212 | [0.146, 0.285] |
+| Pause handling, Candor | TOR ↓ | 0.662 | 0.333 | [0.273, 0.398] |
+| Backchannel | TOR ↓ | 0.327 | 0.236 | [0.127, 0.345] |
+| Backchannel | Freq ↑ | 0.025 | 0.107 | |
+| Backchannel | JSD ↓ | 0.649 | 0.749 | |
+| Smooth turn-taking, Candor | TOR ↑ | 0.992 | 0.941 | [0.899, 0.983] |
+| Smooth turn-taking, Candor | Latency (s) ↓ | 0.070 | 0.288 | [0.188, 0.401] |
+| User interruption | TOR ↑ | 1.000 | 0.950 | [0.920, 0.980] |
+| User interruption | Latency (s) ↓ | 0.400 | 0.208 | [0.189, 0.228] |
+
+The median frame took 29.7 ms on every test set: the depformer samples 16
+codebooks, Moshi's 8.
+
+- **No greeting.** Unlike Moshi, PersonaPlex does not open the call. Its
+  median turn-taking latency, 0.05 s, is near the published mean; 53 of its
+  112 replies start before the user's turn ends (latency 0), and a tail of
+  late replies raises the mean to 0.29 s.
+- **Pauses.** It takes the turn in a user's pause about half as often as
+  the published run, by more than the sampling uncertainty. The published
+  run's voice prompt and draw are not known, and the protocol differences of
+  the Moshi run above (simulated call, seeding, no GPT-4o score) apply.

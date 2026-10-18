@@ -1,1 +1,1 @@
-"""Metrics of the Moshi system."""
+"""Metrics of the duplex system."""

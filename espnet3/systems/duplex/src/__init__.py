@@ -1,1 +1,1 @@
-"""Inference-only port of the released PyTorch Moshi and Mimi."""
+"""Port of the released PyTorch Moshi, Mimi and PersonaPlex, and their fine-tuning."""
