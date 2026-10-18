@@ -238,6 +238,7 @@ We also have [prebuilt Kaldi binaries](https://github.com/espnet/espnet/blob/mas
         | `s2t`      | Speech to Text (e.g., OWSM)   |
         | `spk`      | Speaker recognition           |
         | `speechlm` | Speech language models        |
+        | `moshi`    | Moshi full-duplex dialogue (espnet3) |
         | `mcp`      | The `espnet-mcp` server for agents |
         | `dev`      | Code formatting and linting   |
         | `test`     | Unit test dependencies (includes `train`) |

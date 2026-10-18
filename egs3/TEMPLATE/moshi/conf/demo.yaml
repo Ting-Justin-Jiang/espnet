@@ -3,7 +3,7 @@
 ##########################################################
 # Quick usage:
 #   python run.py --stages pack_demo   --demo_config conf/demo.yaml
-#   python demo/app.py --demo-dir demo          # on a GPU machine
+#   python exp/moshiko/demo/app.py --demo-dir exp/moshiko/demo   # on a GPU
 #   python run.py --stages upload_demo --demo_config conf/demo.yaml
 #
 # A full-duplex conversation through the browser microphone: the browser
@@ -59,7 +59,7 @@ ui:
 #                    PACKING SETTING                     #
 ##########################################################
 pack:
-  out_dir: demo
+  out_dir: ${exp_dir}/demo
   include: []
   exclude: []
   requirements:

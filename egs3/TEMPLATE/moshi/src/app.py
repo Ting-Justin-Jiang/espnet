@@ -5,7 +5,8 @@ Each chunk is resampled to 24 kHz and cut into 80 ms frames; every frame goes
 through ``MoshiInference.step``, which returns Moshi's next 80 ms, streamed
 back to the browser. Moshi keeps listening while it speaks, so the user can
 interrupt it or back-channel. One conversation runs at a time: the model's
-stream state lives on the GPU.
+stream state lives on the GPU, so the start, stream and stop events share one
+queue of size one.
 
 Browsers allow the microphone only on HTTPS or on ``localhost``; on a cluster
 node, reach the app through an SSH tunnel (see the system README).
@@ -30,6 +31,12 @@ from espnet3.utils.config_utils import load_config_with_defaults
 from espnet3.utils.logging_utils import configure_logging
 
 logger = logging.getLogger(__name__)
+
+#: Frames run on silence when a conversation starts. The first two frames of a
+#: conversation run eagerly and capture the CUDA graphs, which takes a few
+#: hundred milliseconds; running them before the microphone audio keeps that
+#: stall out of the reply stream, where it would delay every later reply.
+WARMUP_FRAMES = 2
 
 
 class MicrophoneStreamUI(UIAsset):
@@ -65,17 +72,28 @@ class DuplexConversation:
         self.resampler: soxr.ResampleStream | None = None
         self.input_rate: int | None = None
         self.pending = np.zeros(0, dtype=np.float32)
+        self.replies: list[np.ndarray] = []
         self.text = ""
 
     def start(self) -> None:
-        """Begin a conversation, closing one the browser left open."""
+        """Begin a conversation, closing one the browser left open.
+
+        Moshi's stream starts ``WARMUP_FRAMES`` frames of silence before the
+        microphone's; their replies go out with the first microphone chunk.
+        """
         if self.model.is_streaming:
             self.model.stop()
         self.model.start()
         self.resampler = None
         self.input_rate = None
         self.pending = np.zeros(0, dtype=np.float32)
+        self.replies = []
         self.text = ""
+        silence = np.zeros(self.model.frame_size, dtype=np.float32)
+        for _ in range(WARMUP_FRAMES):
+            pcm, piece = self.model.step(silence)
+            self.replies.append(pcm)
+            self.text += piece
 
     def stop(self) -> None:
         """End the conversation."""
@@ -90,8 +108,10 @@ class DuplexConversation:
                 float, mono or multi-channel.
 
         Returns:
-            ``wav``: ``(24000, samples)`` Moshi produced for the complete
-            frames received; ``text``: the inner monologue so far.
+            ``wav``: ``(24000, int16 samples)`` Moshi produced for the complete
+            frames received, or ``None`` when no frame was completed; ``text``:
+            the inner monologue so far. The samples are int16 because Gradio
+            rescales float audio by each chunk's own peak.
         """
         rate, samples = speech
         if samples.ndim > 1:
@@ -113,16 +133,16 @@ class DuplexConversation:
         self.pending = np.concatenate([self.pending, resampled])
 
         frame_size = self.model.frame_size
-        replies = []
         while len(self.pending) >= frame_size:
             pcm, piece = self.model.step(self.pending[:frame_size])
             self.pending = self.pending[frame_size:]
-            replies.append(pcm)
+            self.replies.append(pcm)
             self.text += piece
-        if replies:
-            reply = np.concatenate(replies)
-        else:
-            reply = np.zeros(0, dtype=np.float32)
+        if not self.replies:
+            return {"wav": None, "text": self.text.strip()}
+        reply = np.clip(np.concatenate(self.replies), -1.0, 1.0)
+        self.replies = []
+        reply = (reply * 32767).astype(np.int16)
         return {"wav": (self.model.sample_rate, reply), "text": self.text.strip()}
 
 
@@ -156,16 +176,22 @@ def build_demo(demo_dir: Path, demo_config_path: Path | None = None):
             outputs = [session.build_output_component(s) for s in session.output_specs]
         if session.description:
             gr.Markdown(session.description)
-        microphone.start_recording(conversation.start)
+        # One queue for the three events: one conversation at a time.
+        microphone.start_recording(
+            conversation.start, concurrency_id="moshi", concurrency_limit=1
+        )
         # One chunk per frame keeps the reply's added delay at one frame.
         microphone.stream(
             respond,
             inputs=[microphone],
             outputs=outputs,
             stream_every=0.08,
+            concurrency_id="moshi",
             concurrency_limit=1,
         )
-        microphone.stop_recording(conversation.stop)
+        microphone.stop_recording(
+            conversation.stop, concurrency_id="moshi", concurrency_limit=1
+        )
     return app
 
 

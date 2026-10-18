@@ -254,9 +254,10 @@ class LMGen:
         self.cuda_graph = cuda_graph
         self.max_delay = max(lm.delays)
         self.cache: torch.Tensor | None = None
+        self.delays: torch.Tensor | None = None
         self.offset = 0
-        self._forward_text = lm.forward_text
-        self._depformer = self._depformer_step
+        self._forward_text = None
+        self._depformer = None
 
     @property
     def is_streaming(self) -> bool:
@@ -264,9 +265,17 @@ class LMGen:
         return self.cache is not None
 
     def start(self, batch_size: int, device: torch.device) -> None:
-        """Open a stream: empty token cache and temporal transformer state."""
+        """Open a stream: empty token cache and temporal transformer state.
+
+        Raises:
+            RuntimeError: If a stream is open.
+            ValueError: If CUDA graphs are asked for on a device other than CUDA,
+                where capture would record nothing and replays would do nothing.
+        """
         if self.cache is not None:
             raise RuntimeError("LMGen is already streaming.")
+        if self.cuda_graph and device.type != "cuda":
+            raise ValueError(f"CUDA graphs need a CUDA device, got {device}.")
         # A ring buffer long enough to hold every token still waiting on its delay.
         self.cache = torch.full(
             (batch_size, self.lm.num_codebooks, self.max_delay + 2),
@@ -274,6 +283,7 @@ class LMGen:
             device=device,
             dtype=torch.long,
         )
+        self.delays = torch.tensor(self.lm.delays, device=device, dtype=torch.long)
         self.offset = 0
         start_streaming(self.lm.transformer, batch_size)
         # Graphs capture the stream state just created, so each stream gets its own.
@@ -285,12 +295,16 @@ class LMGen:
             self._depformer = self._depformer_step
 
     def stop(self) -> None:
-        """Close the stream and drop its graphs."""
-        stop_streaming(self.lm.transformer)
+        """Close the stream and drop its graphs.
+
+        Stops the depformer too, in case a frame was interrupted inside it.
+        """
+        stop_streaming(self.lm)
         self.cache = None
+        self.delays = None
         self.offset = 0
-        self._forward_text = self.lm.forward_text
-        self._depformer = self._depformer_step
+        self._forward_text = None
+        self._depformer = None
 
     @torch.no_grad()
     def step(self, user_codes: torch.Tensor) -> torch.Tensor | None:
@@ -310,7 +324,7 @@ class LMGen:
             raise RuntimeError("Call start() before step().")
         dep_q = lm.dep_q
         capacity = cache.shape[2]
-        delays = torch.tensor(lm.delays, device=cache.device, dtype=torch.long)
+        delays = self.delays
 
         # The user's codes of this frame are read once their delay has passed.
         write = (self.offset + delays[dep_q + 1 :]) % capacity

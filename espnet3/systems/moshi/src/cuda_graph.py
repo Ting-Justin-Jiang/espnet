@@ -27,7 +27,7 @@
 
 A Moshi frame runs a few thousand small kernels. Launched one by one from
 Python, they take longer than the 80 ms a frame lasts; replayed from a CUDA
-graph, they take a fraction of it (see the system README).
+graph, they take a fraction of it (see egs3/TEMPLATE/moshi/README.md).
 """
 
 from __future__ import annotations

@@ -11,10 +11,11 @@ FRAME_MS = 80.0
 
 
 class StepTime(BaseMetric):
-    """Mean time of one frame over the conversations of a test set.
+    """Frame time over the conversations of a test set.
 
     Reads ``step_ms``, which the ``infer`` stage writes for each
-    conversation (its mean frame time). Live serving keeps up with the user
+    conversation (its median frame time), and averages it over the
+    conversations, each counting once. Live serving keeps up with the user
     only when a frame takes less than 80 ms.
 
     Examples:

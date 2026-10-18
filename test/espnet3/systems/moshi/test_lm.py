@@ -1,8 +1,10 @@
 """Tests for the Moshi language model and its frame-by-frame generator."""
 
+import pytest
 import torch
 
 from espnet3.systems.moshi.src.lm import LMGen, LMModel, sample_token
+from espnet3.systems.moshi.src.streaming import start_streaming
 
 CPU = torch.device("cpu")
 
@@ -96,16 +98,36 @@ def test_inputs_and_outputs_follow_delays(tiny_lm_config):
         assert torch.equal(frame[2:], audio.calls[s][0, 1:])
 
 
+def _generate(lm, device, cuda_graph):
+    """Run six seeded frames of constant user codes and return Moshi's tokens."""
+    gen = LMGen(lm, 0.8, 0.7, 5, 5, cuda_graph=cuda_graph)
+    gen.start(1, device)
+    torch.manual_seed(3)
+    outs = [gen.step(torch.full((1, 3, 1), i, device=device)) for i in range(6)]
+    gen.stop()
+    return torch.cat(outs[1:], dim=-1)
+
+
 def test_generation_is_reproducible(tiny_lm_config):
     """The same seed gives the same conversation."""
     lm = _lm(tiny_lm_config)
+    assert torch.equal(_generate(lm, CPU, False), _generate(lm, CPU, False))
 
-    def run():
-        gen = LMGen(lm, 0.8, 0.7, 5, 5, cuda_graph=False)
+
+def test_cuda_graph_needs_a_cuda_device(tiny_lm_config):
+    """Capturing on CPU would record nothing, so it is refused."""
+    gen = LMGen(_lm(tiny_lm_config), 0.8, 0.7, 5, 5, cuda_graph=True)
+    with pytest.raises(ValueError, match="CUDA graphs need a CUDA device"):
         gen.start(1, CPU)
-        torch.manual_seed(3)
-        outs = [gen.step(torch.full((1, 3, 1), i)) for i in range(6)]
-        gen.stop()
-        return torch.cat(outs[1:], dim=-1)
 
-    assert torch.equal(run(), run())
+
+def test_stop_also_stops_an_interrupted_depformer(tiny_lm_config):
+    """A frame interrupted inside the depformer does not block the next stream."""
+    lm = _lm(tiny_lm_config)
+    gen = LMGen(lm, 0.8, 0.7, 5, 5, cuda_graph=False)
+    gen.start(1, CPU)
+    start_streaming(lm.depformer, 1)
+    gen.stop()
+    gen.start(1, CPU)
+    assert gen.step(torch.zeros(1, 3, 1, dtype=torch.long)) is None
+    gen.stop()

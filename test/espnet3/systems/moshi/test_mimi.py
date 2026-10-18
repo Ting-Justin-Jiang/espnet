@@ -1,5 +1,6 @@
 """Tests for the Mimi codec of the Moshi port."""
 
+import pytest
 import torch
 
 from espnet3.systems.moshi.src.mimi import MimiModel, StreamingConv1d
@@ -26,13 +27,11 @@ def test_frame_size_and_code_shape(tiny_mimi_config):
     assert audio.shape == (2, 1, 64 * 5)
 
 
-def test_encode_pads_to_whole_frames(tiny_mimi_config):
-    """A partial last frame is padded with zeros."""
+def test_encode_rejects_partial_frames(tiny_mimi_config):
+    """Audio that is not a whole number of frames is an error, not padded."""
     mimi = _mimi(tiny_mimi_config)
-    x = torch.randn(1, 1, 64 * 3 + 10)
-    padded = torch.cat([x, torch.zeros(1, 1, 54)], dim=-1)
-    with torch.no_grad():
-        assert torch.equal(mimi.encode(x), mimi.encode(padded))
+    with pytest.raises(ValueError, match="not a multiple of 64"):
+        mimi.encode(torch.randn(1, 1, 64 * 3 + 10))
 
 
 def test_streaming_matches_full_signal(tiny_mimi_config):

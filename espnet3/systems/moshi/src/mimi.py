@@ -43,7 +43,6 @@ from dataclasses import dataclass
 
 import torch
 from torch import nn
-from torch.nn import functional as F
 
 from espnet3.systems.moshi.src.quantizer import SplitResidualVectorQuantizer
 from espnet3.systems.moshi.src.streaming import StreamingModule
@@ -89,7 +88,6 @@ class StreamingConv1d(StreamingModule):
         kernel_size: Kernel size.
         stride: Stride; the input length must be a multiple of it.
         dilation: Dilation.
-        groups: Groups.
         bias: Whether the convolution has a bias.
         pad_mode: ``"constant"`` or ``"replicate"``.
     """
@@ -101,7 +99,6 @@ class StreamingConv1d(StreamingModule):
         kernel_size: int,
         stride: int = 1,
         dilation: int = 1,
-        groups: int = 1,
         bias: bool = True,
         pad_mode: str = "constant",
     ) -> None:
@@ -116,7 +113,6 @@ class StreamingConv1d(StreamingModule):
             kernel_size,
             stride,
             dilation=dilation,
-            groups=groups,
             bias=bias,
         )
         self.stride = stride
@@ -448,14 +444,15 @@ class MimiModel(nn.Module):
         self.num_codebooks = num_codebooks
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:
-        """Encode audio ``[B, 1, T]`` to codes ``[B, num_codebooks, ceil(T / frame)]``.
+        """Encode audio ``[B, 1, T]`` to codes ``[B, num_codebooks, T / frame_size]``.
 
-        The audio is right-padded with zeros to a whole number of frames.
-        While streaming, pass exactly one or more whole frames per call.
+        Raises:
+            ValueError: If ``T`` is not a whole number of frames.
         """
-        length = x.shape[-1]
-        extra = math.ceil(length / self.frame_size) * self.frame_size - length
-        x = F.pad(x, (0, extra))
+        if x.shape[-1] % self.frame_size != 0:
+            raise ValueError(
+                f"Audio length {x.shape[-1]} is not a multiple of {self.frame_size}."
+            )
         emb = self.encoder(x)
         emb = self.encoder_transformer(emb)
         emb = self.downsample(emb)

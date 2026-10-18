@@ -91,6 +91,8 @@ class MoshiInference:
     ) -> None:
         """Load the codec, the language model and the text tokenizer."""
         self.device = torch.device(device)
+        if cuda_graph and self.device.type != "cuda":
+            raise ValueError(f"cuda_graph needs a CUDA device, got {device}.")
         self.seed = seed
         self.cuda_graph = cuda_graph
 
@@ -115,8 +117,8 @@ class MoshiInference:
         )
         self.sample_rate = self.mimi.sample_rate
         self.frame_size = self.mimi.frame_size
-        self._encode = self.mimi.encode
-        self._decode = self.mimi.decode
+        self._encode = None
+        self._decode = None
 
     def start(self) -> None:
         """Open a conversation: fresh codec and language model streams, reseeded."""
@@ -136,8 +138,8 @@ class MoshiInference:
         """Close the conversation and drop its graphs."""
         stop_streaming(self.mimi)
         self.lm_gen.stop()
-        self._encode = self.mimi.encode
-        self._decode = self.mimi.decode
+        self._encode = None
+        self._decode = None
 
     @property
     def is_streaming(self) -> bool:
@@ -155,6 +157,8 @@ class MoshiInference:
             Moshi's next ``frame_size`` samples (silence before its first
             frame) and the text it emitted for that frame (empty when none).
         """
+        if not self.is_streaming:
+            raise RuntimeError("Call start() before step().")
         if frame.shape != (self.frame_size,):
             raise ValueError(f"Expected {self.frame_size} samples, got {frame.shape}.")
         user = torch.from_numpy(frame).to(self.device, torch.float32).view(1, 1, -1)
@@ -166,7 +170,7 @@ class MoshiInference:
         text_token = int(tokens[0, 0, 0])
         if text_token in TEXT_PADDING_IDS:
             return pcm, ""
-        return pcm, self.tokenizer.id_to_piece(text_token).replace("▁", " ")
+        return pcm, self.tokenizer.id_to_piece(text_token).replace("\u2581", " ")
 
     def __call__(self, speech: np.ndarray) -> dict:
         """Run a whole conversation over a recorded user stream.
@@ -176,8 +180,10 @@ class MoshiInference:
 
         Returns:
             ``wav``: Moshi's audio, as long as ``speech`` and frame-aligned
-            with it; ``text``: Moshi's inner-monologue text; ``step_ms``: mean
-            wall-clock time of one frame (real time requires under 80 ms).
+            with it; ``text``: Moshi's inner-monologue text; ``step_ms``:
+            median wall-clock time of a frame (real time requires under 80 ms).
+            The median leaves out the first frames, which also capture the
+            CUDA graphs.
         """
         num_frames = math.ceil(len(speech) / self.frame_size)
         padded = np.zeros(num_frames * self.frame_size, dtype=np.float32)
@@ -197,7 +203,7 @@ class MoshiInference:
         return {
             "wav": np.concatenate(pcms)[: len(speech)],
             "text": "".join(pieces).strip(),
-            "step_ms": 1000.0 * float(np.mean(seconds)),
+            "step_ms": 1000.0 * float(np.median(seconds)),
         }
 
 

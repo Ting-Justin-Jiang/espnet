@@ -68,7 +68,8 @@ the GPU. Whether a GPU could keep up live is what `step_ms` measures.
 
 ## Talking to it with a microphone
 
-`pack_demo` writes a Gradio app (`src/app.py`) with `demo.yaml` into `demo/`.
+`pack_demo` writes a Gradio app (`src/app.py`) with `demo.yaml` into
+`exp/<exp_tag>/demo/`.
 The browser streams the microphone to the app; the app resamples each chunk
 to 24 kHz with a streaming resampler, feeds every complete frame to
 `MoshiInference.step` and streams Moshi's frames back. It is the same `step`
@@ -79,7 +80,7 @@ On a cluster, run the app on a GPU node and reach it through SSH:
 ```bash
 # on the GPU node (inside an interactive job)
 python run.py --stages pack_demo --demo_config conf/demo.yaml
-python demo/app.py --demo-dir demo --server-port 7860
+python exp/moshiko/demo/app.py --demo-dir exp/moshiko/demo --server-port 7860
 
 # on your laptop: forward the port through the login node to the GPU node
 ssh -N -L 7860:localhost:7860 -J <user>@<login-node> <user>@<gpu-node>

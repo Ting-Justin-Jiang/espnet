@@ -71,6 +71,33 @@ def test_live_steps_match_offline_call(tiny_model):
     np.testing.assert_array_equal(np.concatenate(live), offline["wav"])
 
 
+def test_cuda_graph_needs_a_cuda_device(tmp_path, tiny_mimi_config, tiny_lm_config):
+    """cuda_graph on CPU would silently replay nothing, so it is refused."""
+    with pytest.raises(ValueError, match="cuda_graph needs a CUDA device"):
+        MoshiInference(
+            lm=tiny_lm_config,
+            mimi=tiny_mimi_config,
+            hf_repo=None,
+            revision=None,
+            lm_file=str(tmp_path / "unused"),
+            mimi_file=str(tmp_path / "unused"),
+            tokenizer_file=str(tmp_path / "unused"),
+            temp=0.8,
+            temp_text=0.7,
+            top_k=5,
+            top_k_text=5,
+            seed=7,
+            cuda_graph=True,
+            device="cpu",
+        )
+
+
+def test_step_needs_an_open_conversation(tiny_model):
+    """Stepping outside a conversation is an error."""
+    with pytest.raises(RuntimeError, match="Call start"):
+        tiny_model.step(np.zeros(64, dtype=np.float32))
+
+
 def test_step_rejects_partial_frames(tiny_model):
     """A frame of the wrong size is an error."""
     tiny_model.start()

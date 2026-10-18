@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 from omegaconf import OmegaConf
 
-from egs3.TEMPLATE.moshi.src.app import DuplexConversation
+from egs3.TEMPLATE.moshi.src.app import WARMUP_FRAMES, DuplexConversation
 from espnet3.publication.demo.packing import pack_demo
 from espnet3.utils.config_utils import load_and_merge_config
 
@@ -48,16 +48,28 @@ def test_chunks_become_frames_and_replies():
     replies = []
     for start in range(0, len(samples), 3000):
         out = conversation(speech=(48000, samples[start : start + 3000]))
-        rate, reply = out["wav"]
-        assert rate == 24000
-        replies.append(reply)
+        if out["wav"] is not None:
+            rate, reply = out["wav"]
+            assert rate == 24000 and reply.dtype == np.int16
+            replies.append(reply)
     conversation.stop()
     assert not model.is_streaming
-    heard = np.concatenate(model.frames)
-    # 1 s at 24 kHz is 12.5 frames: 12 whole frames reach the model.
-    assert len(model.frames) == 12
-    np.testing.assert_array_equal(np.concatenate(replies), 0.5 * heard)
-    assert out["text"] == "a" * 12
+    # Two warm-up frames of silence, then 1 s at 24 kHz: 12 whole frames.
+    assert len(model.frames) == WARMUP_FRAMES + 12
+    assert not np.any(np.concatenate(model.frames[:WARMUP_FRAMES]))
+    expected = (0.5 * np.concatenate(model.frames) * 32767).astype(np.int16)
+    np.testing.assert_array_equal(np.concatenate(replies), expected)
+    assert out["text"] == "a" * (WARMUP_FRAMES + 12)
+
+
+def test_no_reply_until_a_frame_completes():
+    """A chunk that completes no frame returns no audio."""
+    model = _HalfEcho()
+    conversation = DuplexConversation(model)
+    conversation.start()
+    conversation(speech=(48000, _microphone(0.2)))
+    out = conversation(speech=(48000, _microphone(0.01)))
+    assert out["wav"] is None
 
 
 def test_chunking_does_not_change_what_moshi_hears():
@@ -70,7 +82,7 @@ def test_chunking_does_not_change_what_moshi_hears():
         conversation.start()
         for start in range(0, len(samples), chunk):
             conversation(speech=(48000, samples[start : start + chunk]))
-        heard.append(np.concatenate(model.frames))
+        heard.append(np.concatenate(model.frames[WARMUP_FRAMES:]))
     np.testing.assert_allclose(heard[0], heard[1], atol=1e-6)
     expected = np.sin(2 * np.pi * 220 * np.arange(len(heard[0])) / 24000)
     # After the resampler's warm-up the signal is the original sine.
@@ -87,7 +99,8 @@ def test_restart_closes_the_open_conversation():
     conversation(speech=(48000, _microphone(0.2)))
     conversation.start()
     assert model.is_streaming
-    assert conversation.text == ""
+    # Only the new conversation's warm-up frames are left.
+    assert conversation.text == "a" * WARMUP_FRAMES
 
 
 def test_packed_demo_builds(tmp_path, monkeypatch):
