@@ -42,13 +42,15 @@ from safetensors.torch import load_file
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from espnet3.systems.duplex.src.cuda_graph import CUDAGraphed
-from espnet3.systems.duplex.src.lm import LMGen, LMModel
+from espnet3.systems.duplex.src.lm import (
+    END_OF_TEXT_PADDING_ID,
+    TEXT_PADDING_ID,
+    LMGen,
+    LMModel,
+)
 from espnet3.systems.duplex.src.mimi import MimiModel
 from espnet3.systems.duplex.src.personaplex import PersonaPlexGen, wrap_role_prompt
 from espnet3.systems.duplex.src.streaming import start_streaming, stop_streaming
-
-#: Text tokens Moshi emits while it has no word to say (padding, end of padding).
-TEXT_PADDING_IDS = (0, 3)
 
 #: Deterministic attention kernels (see the module docstring).
 DETERMINISTIC_ATTENTION = [SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH]
@@ -79,6 +81,9 @@ class DuplexInference:
             time needs on GPU. Must be ``False`` on CPU.
         voices_file: PersonaPlex only: archive of the released voice prompts.
         voice_prompt: PersonaPlex only: voice prompt file in that archive.
+        lm_checkpoint: A fine-tuned language model (``.pth`` written by the
+            ``train`` stage) used in place of ``lm_file``. Mimi is frozen
+            during training, so it still comes from ``mimi_file``.
         device: Device to run on.
     """
 
@@ -100,6 +105,7 @@ class DuplexInference:
         cuda_graph: bool,
         voices_file: str | None = None,
         voice_prompt: str | None = None,
+        lm_checkpoint: str | None = None,
         device: str = "cuda",
     ) -> None:
         """Load the codec, the language model and the text tokenizer."""
@@ -111,7 +117,9 @@ class DuplexInference:
 
         self.mimi = MimiModel(**mimi).to(self.device)
         self.mimi.load_state_dict(
-            load_file(_resolve(hf_repo, revision, mimi_file), device=str(self.device))
+            load_file(
+                resolve_file(hf_repo, revision, mimi_file), device=str(self.device)
+            )
         )
         self.mimi.eval()
 
@@ -119,7 +127,20 @@ class DuplexInference:
         # in bfloat16 as released.
         with torch.device("meta"):
             self.lm = LMModel(**lm)
-        state = load_file(_resolve(hf_repo, revision, lm_file), device=str(self.device))
+        if lm_checkpoint is None:
+            state = load_file(
+                resolve_file(hf_repo, revision, lm_file), device=str(self.device)
+            )
+        else:
+            # The checkpoint holds DuplexLM's state: ``lm.*`` and the frozen ``mimi.*``.
+            trained = torch.load(
+                lm_checkpoint, map_location=self.device, weights_only=True
+            )
+            state = {
+                key.removeprefix("lm."): value
+                for key, value in trained.items()
+                if key.startswith("lm.")
+            }
         state = {key: value.to(torch.bfloat16) for key, value in state.items()}
         self.lm.load_state_dict(state, assign=True)
         self.lm.eval()
@@ -133,12 +154,12 @@ class DuplexInference:
                 self.lm, temp, temp_text, top_k, top_k_text, cuda_graph
             )
             self.voice_prompt = _load_voice_prompt(
-                _resolve(hf_repo, revision, voices_file), voice_prompt
+                resolve_file(hf_repo, revision, voices_file), voice_prompt
             )
         else:
             raise ValueError(f"Unknown generator: {generator}")
         self.tokenizer = sentencepiece.SentencePieceProcessor(
-            model_file=str(_resolve(hf_repo, revision, tokenizer_file))
+            model_file=str(resolve_file(hf_repo, revision, tokenizer_file))
         )
         self.sample_rate = self.mimi.sample_rate
         self.frame_size = self.mimi.frame_size
@@ -207,7 +228,7 @@ class DuplexInference:
             agent_codes = tokens[:, 1 : 1 + self.mimi.num_codebooks]
             pcm = self._decode(agent_codes)[0, 0].cpu().numpy()
         text_token = int(tokens[0, 0, 0])
-        if text_token in TEXT_PADDING_IDS:
+        if text_token in (TEXT_PADDING_ID, END_OF_TEXT_PADDING_ID):
             return pcm, ""
         return pcm, self.tokenizer.id_to_piece(text_token).replace("\u2581", " ")
 
@@ -262,7 +283,7 @@ def _load_voice_prompt(archive: Path, name: str) -> dict:
     return torch.load(voices_dir / name, map_location="cpu", weights_only=True)
 
 
-def _resolve(hf_repo: str | None, revision: str | None, filename: str) -> Path:
+def resolve_file(hf_repo: str | None, revision: str | None, filename: str) -> Path:
     """Return ``filename`` downloaded from ``hf_repo``, or as a local path."""
     if hf_repo is None:
         return Path(filename)

@@ -38,8 +38,11 @@ Attribute names follow the released checkpoint.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 from espnet3.systems.duplex.src.cuda_graph import CUDAGraphed
 from espnet3.systems.duplex.src.streaming import start_streaming, stop_streaming
@@ -47,6 +50,79 @@ from espnet3.systems.duplex.src.transformer import RMSNorm, StreamingTransformer
 
 #: Token id of a cache entry not generated yet.
 UNGENERATED_TOKEN_ID = -2
+
+#: Token id of an input with no content (padding of a training batch): its
+#: embedding is zero and it is never a target.
+ZERO_TOKEN_ID = -1
+
+#: Text token of a frame with no word to emit.
+TEXT_PADDING_ID = 3
+
+#: Text token of the frame right before a word, in place of ``TEXT_PADDING_ID``.
+END_OF_TEXT_PADDING_ID = 0
+
+
+class ZeroTokenEmbedding(nn.Embedding):
+    """Embedding that maps ``ZERO_TOKEN_ID`` to a zero vector."""
+
+    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
+        """Embed ``tokens``; ``ZERO_TOKEN_ID`` gives zeros."""
+        embedded = super().forward(tokens.clamp(min=0))
+        zero = torch.zeros((), dtype=embedded.dtype, device=embedded.device)
+        return torch.where((tokens == ZERO_TOKEN_ID)[..., None], zero, embedded)
+
+
+@dataclass
+class LMOutput:
+    """Training outputs, aligned with the input codes (delays undone).
+
+    Attributes:
+        logits: Logits of Moshi's audio codebooks, ``[B, dep_q, T, card]``.
+        mask: Where ``logits`` has a valid target, ``[B, dep_q, T]``.
+        text_logits: Logits of the text stream, ``[B, 1, T, text_card]``.
+        text_mask: Where ``text_logits`` has a valid target, ``[B, 1, T]``.
+    """
+
+    logits: torch.Tensor
+    mask: torch.Tensor
+    text_logits: torch.Tensor
+    text_mask: torch.Tensor
+
+
+def _delay(
+    codes: torch.Tensor, delays: list[int], initial: torch.Tensor
+) -> torch.Tensor:
+    """Shift stream ``k`` of ``codes`` ``[B, K, T]`` right by ``delays[k]`` frames.
+
+    The frames a stream is shifted out of take its initial token.
+    """
+    streams = []
+    for index, delay in enumerate(delays):
+        stream = codes[:, index].roll(delay, dims=1)
+        stream[:, :delay] = initial[:, index]
+        streams.append(stream)
+    return torch.stack(streams, dim=1)
+
+
+def _undelay(
+    logits: torch.Tensor, delays: list[int]
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Shift stream ``k`` of ``logits`` ``[B, K, T, C]`` left by ``delays[k]`` frames.
+
+    Returns:
+        The shifted logits, NaN where a stream has no prediction, and the
+        mask of the frames that have one, ``[B, K, T]``.
+    """
+    B, K, T, _ = logits.shape
+    mask = torch.ones(B, K, T, dtype=torch.bool, device=logits.device)
+    streams = []
+    for index, delay in enumerate(delays):
+        stream = logits[:, index].roll(-delay, dims=1)
+        if delay > 0:
+            stream[:, -delay:] = float("nan")
+            mask[:, index, -delay:] = False
+        streams.append(stream)
+    return torch.stack(streams, dim=1), mask
 
 
 class LMModel(nn.Module):
@@ -100,8 +176,10 @@ class LMModel(nn.Module):
         self.delays = list(delays)
 
         # The extra embedding row is the initial token (id ``card`` or ``text_card``).
-        self.emb = nn.ModuleList([nn.Embedding(card + 1, dim) for _ in range(n_q)])
-        self.text_emb = nn.Embedding(text_card + 1, dim)
+        self.emb = nn.ModuleList(
+            [ZeroTokenEmbedding(card + 1, dim) for _ in range(n_q)]
+        )
+        self.text_emb = ZeroTokenEmbedding(text_card + 1, dim)
         self.transformer = StreamingTransformer(
             d_model=dim,
             num_heads=num_heads,
@@ -120,10 +198,10 @@ class LMModel(nn.Module):
         self.depformer_in = nn.ModuleList(
             [nn.Linear(dim, depformer_dim, bias=False) for _ in range(dep_q)]
         )
-        self.depformer_text_emb = nn.Embedding(text_card + 1, depformer_dim)
+        self.depformer_text_emb = ZeroTokenEmbedding(text_card + 1, depformer_dim)
         # Moshi's last audio token is never a depformer input.
         self.depformer_emb = nn.ModuleList(
-            [nn.Embedding(card + 1, depformer_dim) for _ in range(dep_q - 1)]
+            [ZeroTokenEmbedding(card + 1, depformer_dim) for _ in range(dep_q - 1)]
         )
         self.depformer = StreamingTransformer(
             d_model=depformer_dim,
@@ -178,6 +256,62 @@ class LMModel(nn.Module):
         """Run the temporal transformer on tokens ``[B, 1 + n_q, S]``."""
         return self.forward_embeddings(self.embed(sequence))
 
+    def forward(self, codes: torch.Tensor) -> LMOutput:
+        """Predict every stream of ``codes`` from its past, for training.
+
+        Moshi reads its streams delayed by ``delays``: at frame ``t`` the
+        temporal transformer sees frame ``t - 1`` of each delayed stream, and
+        the depformer predicts Moshi's codebooks of frame ``t`` one after the
+        other. The predictions are returned aligned with ``codes``.
+
+        Args:
+            codes: Text, Moshi's audio and the user's audio, ``[B, 1 + n_q, T]``.
+                ``ZERO_TOKEN_ID`` marks frames with no content.
+
+        Returns:
+            Logits and the masks of their valid targets.
+        """
+        B = codes.shape[0]
+        initial = self.initial_tokens(codes.device).expand(B, -1, -1)
+        delayed = torch.cat([initial, _delay(codes, self.delays, initial)], dim=2)
+        transformer_out, text_logits = self.forward_text(delayed[:, :, :-1])
+        logits = self.forward_depformer_training(delayed[:, :, 1:], transformer_out)
+
+        logits, mask = _undelay(logits, self.delays[1 : self.dep_q + 1])
+        mask = mask & (codes[:, 1 : self.dep_q + 1] != ZERO_TOKEN_ID)
+        text_logits, text_mask = _undelay(text_logits, self.delays[:1])
+        text_mask = text_mask & (codes[:, :1] != ZERO_TOKEN_ID)
+        return LMOutput(logits, mask, text_logits, text_mask)
+
+    def forward_depformer_training(
+        self, sequence: torch.Tensor, transformer_out: torch.Tensor
+    ) -> torch.Tensor:
+        """Run the depformer on every frame at once.
+
+        Args:
+            sequence: Delayed target frames, ``[B, 1 + n_q, T]``; codebook ``k``
+                is predicted from the text and Moshi's codebooks below ``k``.
+            transformer_out: Temporal transformer output ``[B, T, dim]``.
+
+        Returns:
+            Logits of Moshi's codebooks, ``[B, dep_q, T, card]``.
+        """
+        B, _, T = sequence.shape
+        inputs = []
+        for index in range(self.dep_q):
+            if index == 0:
+                token_emb = self.depformer_text_emb(sequence[:, 0])
+            else:
+                token_emb = self.depformer_emb[index - 1](sequence[:, index])
+            inputs.append(token_emb + self.depformer_in[index](transformer_out))
+        depformer_input = torch.stack(inputs, dim=2).view(B * T, self.dep_q, -1)
+        output = self.depformer(depformer_input)
+        logits = [
+            self.linears[index](output[:, index]).view(B, T, -1)
+            for index in range(self.dep_q)
+        ]
+        return torch.stack(logits, dim=1)
+
     def forward_depformer(
         self, index: int, token: torch.Tensor, transformer_out: torch.Tensor
     ) -> torch.Tensor:
@@ -200,6 +334,57 @@ class LMModel(nn.Module):
         output = self.depformer(depformer_input, weight_offset=index)
         logits = self.linears[index](output)
         return logits[:, None]
+
+
+def duplex_loss(
+    output: LMOutput,
+    codes: torch.Tensor,
+    first_codebook_weight: float,
+    text_padding_weight: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Cross-entropy of the text and audio streams, as kyutai fine-tunes Moshi.
+
+    Each loss is a weighted mean over the valid targets: the semantic (first)
+    audio codebook weighs ``first_codebook_weight`` times the acoustic ones,
+    and the text padding tokens weigh ``text_padding_weight``.
+
+    Args:
+        output: Output of :meth:`LMModel.forward` on ``codes``.
+        codes: The input codes, ``[B, 1 + n_q, T]``.
+        first_codebook_weight: Weight of the first audio codebook.
+        text_padding_weight: Weight of ``TEXT_PADDING_ID`` and
+            ``END_OF_TEXT_PADDING_ID`` targets.
+
+    Returns:
+        The text loss and the audio loss.
+    """
+    dep_q = output.logits.shape[1]
+    audio_target = codes[:, 1 : dep_q + 1]
+    audio_weight = output.mask.float()
+    audio_weight[:, 0] *= first_codebook_weight
+    text_target = codes[:, :1]
+    text_weight = output.text_mask.float()
+    for token in (TEXT_PADDING_ID, END_OF_TEXT_PADDING_ID):
+        text_weight[text_target == token] *= text_padding_weight
+    return (
+        _weighted_cross_entropy(output.text_logits, text_target, text_weight),
+        _weighted_cross_entropy(output.logits, audio_target, audio_weight),
+    )
+
+
+def _weighted_cross_entropy(
+    logits: torch.Tensor, target: torch.Tensor, weight: torch.Tensor
+) -> torch.Tensor:
+    """Weighted mean cross-entropy over the targets of non-zero weight."""
+    valid = weight > 0
+    target = torch.where(valid, target, torch.zeros_like(target))
+    losses = F.cross_entropy(
+        logits.reshape(-1, logits.shape[-1]).float(),
+        target.reshape(-1),
+        reduction="none",
+    ).view_as(weight)
+    losses = torch.where(valid, losses * weight, torch.zeros_like(losses))
+    return losses.sum() / weight.sum()
 
 
 def sample_token(logits: torch.Tensor, temp: float, top_k: int) -> torch.Tensor:

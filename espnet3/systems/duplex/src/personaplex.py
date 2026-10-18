@@ -48,15 +48,13 @@ from __future__ import annotations
 import torch
 
 from espnet3.systems.duplex.src.cuda_graph import CUDAGraphed
-from espnet3.systems.duplex.src.lm import LMModel, sample_token
+from espnet3.systems.duplex.src.lm import TEXT_PADDING_ID, LMModel, sample_token
 from espnet3.systems.duplex.src.streaming import start_streaming, stop_streaming
 
 #: Mimi codes of a silent frame, forced on PersonaPlex's channel in the prompts.
 SILENCE_TOKENS = (948, 243, 1178, 546, 1736, 1030, 1978, 2008)
 #: Mimi codes of a 440 Hz frame, forced on the user's channel in the prompts.
 SINE_TOKENS = (430, 1268, 381, 1611, 1095, 1495, 56, 472)
-#: Text padding token, forced on the text stream outside the role prompt.
-TEXT_PADDING_ID = 3
 #: Silence after the voice prompt and after the role prompt, in frames.
 PROMPT_SILENCE_FRAMES = 6
 

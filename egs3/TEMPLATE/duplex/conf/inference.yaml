@@ -4,9 +4,11 @@
 # Quick usage:
 #   python run.py --stages infer --inference_config conf/inference.yaml
 #
-# Shared default merged under every Moshi recipe's inference config. The
-# system runs the released model and has no training config, so this config
-# carries the experiment identity (exp_tag).
+# Shared default merged under every duplex recipe's inference config. A
+# benchmark recipe runs a released model without a training config, so this
+# config carries the experiment identity (exp_tag); given a training config,
+# `launch()` takes exp_tag and exp_dir from it instead, and a fine-tuned
+# model is read with `model.lm_checkpoint: ${exp_dir}/valid.loss.ave_1best.pth`.
 
 defaults:
   # The released Moshi, conf/model/moshiko.yaml, under `model`.

@@ -3,7 +3,7 @@
 A full-duplex speech-text model reads one 80 ms frame of the user's audio and
 writes one frame of its own audio and inner-monologue text every step, so it
 listens while it speaks. This system runs two released models of the same
-architecture, each described by a block under `conf/model/`:
+architecture and fine-tunes them; each model is a block under `conf/model/`:
 
 - `moshiko.yaml`: [Moshi](https://arxiv.org/abs/2410.00037)
   (`kyutai/moshiko-pytorch-bf16`).
@@ -14,6 +14,8 @@ architecture, each described by a block under `conf/model/`:
 
 ## Stages
 
+A benchmark recipe runs released models (`DuplexEvaluationSystem`):
+
 ```bash
 python run.py --stages create_dataset infer --inference_config conf/inference.yaml
 python run.py --stages measure \
@@ -21,7 +23,16 @@ python run.py --stages measure \
 python run.py --stages pack_demo --demo_config conf/demo.yaml
 ```
 
-`create_dataset` prepares the test sets of the inference config. `infer` runs
+A fine-tuning recipe trains first (`DuplexSystem`, see Fine-tuning):
+
+```bash
+python run.py --stages create_dataset train --training_config conf/training.yaml
+python run.py --stages infer measure --training_config conf/training.yaml \
+    --inference_config conf/inference.yaml --metrics_config conf/metrics.yaml
+```
+
+`create_dataset` prepares the datasets of the training config, or the test
+sets of the inference config in a benchmark recipe. `infer` runs
 one conversation per test item and writes the model's channel
 (`<inference_dir>/<test>/wav/*.wav`), its inner monologue (`text.scp`) and the
 mean wall-clock time of a frame (`step_ms.scp`). `measure` scores them;
@@ -67,6 +78,39 @@ The model block is composed under `model:` by the inference and demo configs
 (`defaults: [model: moshiko]`). Another released Moshi, such as
 `kyutai/moshika-pytorch-bf16`, is a copy of `moshiko.yaml` with its repository
 and revision.
+
+## Fine-tuning
+
+`conf/training.yaml` fine-tunes the released model of `pretrained` in full,
+with the settings of kyutai's
+[moshi-finetune](https://github.com/kyutai-labs/moshi-finetune): 100 s
+windows, 16 windows a step, AdamW at 2e-6 with a one-cycle schedule and 5 %
+warm-up, gradient norm clipped at 1. `src/training.py` holds the two pieces a
+recipe plugs in:
+
+- **The data.** A training item is a window of a two-channel conversation
+  at 24 kHz, channel 0 being the speaker the model learns to be, with the
+  timestamped words of channel 0. The dataset preprocessor `TextStream`
+  writes them into the text stream as moshi-finetune's interleaver does.
+- **The model.** `DuplexLM` encodes both channels with the frozen Mimi in
+  float32, as at inference, and trains the language model on every stream:
+  text cross-entropy with the padding tokens weighted 0.5, audio
+  cross-entropy with the semantic codebook weighted 100.
+
+The training forward gives, for every stream and frame, the logits that
+frame-by-frame generation computes from the same tokens, and no prediction
+depends on its own target (`test_lm.py`).
+
+The 7B model trains with FSDP. Parameters, gradients and AdamW states are
+sharded; every transformer layer recomputes its activations; parameters and
+buffers stay float32 (bfloat16 buffers would round Mimi's codebooks) while
+autocast computes in bfloat16; `FSDPClipGradNorm` clips the gradient norm
+over all shards, which Lightning's own clipping does not do under FSDP. The
+checkpoint with the lowest validation loss, `valid.loss.ave_1best.pth`, is
+read by inference as `model.lm_checkpoint`.
+
+PersonaPlex's voice and role prompts are not part of the training items:
+fine-tuning `pretrained: model/personaplex` would train it without them.
 
 ## Serving without a microphone
 

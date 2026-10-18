@@ -1,0 +1,169 @@
+##########################################################
+#                    TRAINING SETTING                    #
+##########################################################
+# Quick usage:
+#   python run.py --stages create_dataset train --training_config conf/training.yaml
+#
+# Shared default merged under every duplex recipe's training config (see
+# `load_and_merge_config` in `run.py`). It fine-tunes the released model of
+# `pretrained` (a block of conf/model/) in full, with kyutai's moshi-finetune
+# settings: 100 s windows, 16 windows a step, AdamW at 2e-6 with a one-cycle
+# schedule, gradient norm clipped at 1, and its loss weights. The 7B model is
+# sharded with FSDP. The recipe fills in the training and validation data.
+
+defaults:
+  # The released model the training starts from, conf/model/moshiko.yaml.
+  - pretrained: model/moshiko
+  - _self_
+
+##########################################################
+#                  SYSTEM AND PATH SETTING               #
+##########################################################
+num_device: 4
+num_nodes: 1
+
+# The model is instantiated directly via Hydra.
+task:
+
+recipe_dir: .
+data_dir: ${recipe_dir}/data
+exp_tag: ${self_name:}
+exp_dir: ${recipe_dir}/exp/${exp_tag}
+
+##########################################################
+#                    DATASET DEFINITION                  #
+##########################################################
+# Each item is a window of a two-channel conversation: `speech` [N, 2] at
+# 24 kHz (channel 0 is the speaker the model learns to be, channel 1 the
+# user) and `words`, the (word, start, end) of channel 0 in seconds from the
+# window start. TextStream turns the words into the model's text stream.
+dataset:
+  _target_: espnet3.components.data.data_organizer.DataOrganizer
+  _recursive_: false
+  recipe_dir: ${recipe_dir}
+  train:
+  valid:
+  preprocessor:
+    _target_: espnet3.systems.duplex.src.training.TextStream
+    hf_repo: ${pretrained.hf_repo}
+    revision: ${pretrained.revision}
+    tokenizer_file: ${pretrained.tokenizer_file}
+    sample_rate: ${pretrained.mimi.sample_rate}
+    frame_rate: ${pretrained.mimi.frame_rate}
+
+# Keyword arguments of the recipe's DatasetBuilder (create_dataset stage).
+create_dataset:
+  recipe_dir: ${recipe_dir}
+
+##########################################################
+#                      MODEL SETTING                     #
+##########################################################
+model:
+  _target_: espnet3.systems.duplex.src.training.DuplexLM
+  lm: ${pretrained.lm}
+  mimi: ${pretrained.mimi}
+  hf_repo: ${pretrained.hf_repo}
+  revision: ${pretrained.revision}
+  lm_file: ${pretrained.lm_file}
+  mimi_file: ${pretrained.mimi_file}
+  first_codebook_weight: 100.0
+  text_padding_weight: 0.5
+
+##########################################################
+#            OPTIMIZER & SCHEDULER SETTING               #
+##########################################################
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 2.0e-6
+  betas: [0.9, 0.95]
+  eps: 1.0e-8
+  weight_decay: 0.1
+scheduler:
+  _target_: torch.optim.lr_scheduler.OneCycleLR
+  max_lr: ${optimizer.lr}
+  total_steps: ${trainer.max_steps}
+  pct_start: 0.05
+scheduler_interval: step
+
+##########################################################
+#                OTHER TRAINING SETTING                  #
+##########################################################
+# Keep the checkpoint with the lowest validation loss, written as
+# `valid.loss.ave_1best.pth`; inference reads it as `model.lm_checkpoint`.
+best_model_criterion:
+  - - valid/loss
+    - 1
+    - min
+
+seed: 0
+
+##########################################################
+#                   DATALOADER SETTING                   #
+##########################################################
+# Windows per GPU; with 4 GPUs a step sees kyutai's 16 windows.
+dataloader:
+  train:
+    iter_factory:
+    batch_size: 4
+    num_workers: 4
+    shuffle: true
+    drop_last: true
+  valid:
+    iter_factory:
+    batch_size: 4
+    num_workers: 4
+    shuffle: false
+
+##########################################################
+#                    TRAINER SETTING                     #
+##########################################################
+# These settings map to `lightning.Trainer(...)`. Every transformer layer is
+# its own FSDP unit and recomputes its activations in the backward pass. The
+# model is a unit too, so that the LightningModule owns no parameter: ESPnet3
+# saves the model's state dict, whose keys FSDP must find as it named them.
+trainer:
+  accelerator: gpu
+  devices: ${num_device}
+  num_nodes: ${num_nodes}
+  precision: bf16-mixed
+  max_steps: 2000
+  log_every_n_steps: 10
+  strategy:
+    _target_: lightning.pytorch.strategies.FSDPStrategy
+    sharding_strategy: FULL_SHARD
+    # Mimi's frozen parameters share FSDP units with trained ones.
+    use_orig_params: true
+    state_dict_type: full
+    # Parameters and buffers stay float32 (bfloat16 buffers would round
+    # Mimi's codebooks and change its codes); autocast computes in bfloat16.
+    mixed_precision:
+      _target_: torch.distributed.fsdp.MixedPrecision
+      param_dtype:
+        _target_: hydra.utils.get_object
+        path: torch.float32
+      reduce_dtype:
+        _target_: hydra.utils.get_object
+        path: torch.bfloat16
+      buffer_dtype:
+        _target_: hydra.utils.get_object
+        path: torch.float32
+    auto_wrap_policy:
+      _target_: torch.distributed.fsdp.wrap.ModuleWrapPolicy
+      module_classes:
+        - _target_: hydra.utils.get_class
+          path: espnet3.systems.duplex.src.transformer.TransformerLayer
+        - _target_: hydra.utils.get_class
+          path: espnet3.systems.duplex.src.training.DuplexLM
+    activation_checkpointing_policy:
+      _target_: torch.distributed.fsdp.wrap.ModuleWrapPolicy
+      module_classes:
+        - _target_: hydra.utils.get_class
+          path: espnet3.systems.duplex.src.transformer.TransformerLayer
+  callbacks:
+    - _target_: espnet3.systems.duplex.src.training.FSDPClipGradNorm
+      max_norm: 1.0
+
+##########################################################
+#                      FIT SETTING                       #
+##########################################################
+fit: {}

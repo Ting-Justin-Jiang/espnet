@@ -5,7 +5,7 @@
 #   python run.py --stages measure \
 #       --inference_config conf/inference.yaml --metrics_config conf/metrics.yaml
 #
-# Shared default merged under every Moshi recipe's metrics config.
+# Shared default merged under every duplex recipe's metrics config.
 # `exp_tag` and `inference_dir` come from the inference config. A recipe that
 # sets `metrics:` replaces this list, so it lists StepTime again.
 
