@@ -10,21 +10,28 @@ builder:
   backchannel_reference: icc_gt_distribution.json
 
 # Each task: the annotation file of its samples (where the pause, the end of
-# the user's turn or the interruption is; backchannel samples have none) and
-# its number of samples, which the builder checks after extraction.
+# the user's turn or the interruption is; backchannel samples have none), its
+# number of samples, which the builder checks after extraction, and the role
+# prompt NVIDIA/personaplex's README gives for its category (read only by a
+# PersonaPlex run, whose input_key includes role_prompt).
 tasks:
   candor_pause_handling:
     annotation: pause.json
     samples: 216
+    role_prompt: You enjoy having a good conversation.
   candor_turn_taking:
     annotation: turn_taking.json
     samples: 119
+    role_prompt: You enjoy having a good conversation.
   icc_backchannel:
     annotation:
     samples: 55
+    role_prompt: You enjoy having a good conversation.
   synthetic_pause_handling:
     annotation: pause.json
     samples: 137
+    role_prompt: You enjoy having a good conversation.
   synthetic_user_interruption:
     annotation: interrupt.json
     samples: 200
+    role_prompt: You are a wise and friendly teacher. Answer questions or provide advice in a clear and engaging way.

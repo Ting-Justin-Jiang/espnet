@@ -121,7 +121,7 @@ def tiny_personaplex(tmp_path, tiny_mimi_config, plex_lm_config, tiny_tokenizer)
     save_file(LMModel(**plex_lm_config).state_dict(), tmp_path / "lm.safetensors")
     (tmp_path / "voices").mkdir()
     # DuplexInference runs the language model in bfloat16, as the voices are.
-    voice = _voice_prompt(plex_lm_config, torch.bfloat16)
+    voice = _voice_prompt(plex_lm_config, torch.bfloat16, frames=1)
     torch.save(voice, tmp_path / "voices" / "TINY.pt")
     with tarfile.open(tmp_path / "voices.tgz", "w:gz") as tar:
         tar.add(tmp_path / "voices" / "TINY.pt", arcname="voices/TINY.pt")
@@ -158,17 +158,22 @@ def test_prompt_frames_must_match_the_codebooks(plex_lm_config):
 
 
 def test_personaplex_conversation(tiny_personaplex, monkeypatch):
-    """A role prompt is required; the output is frame-aligned and reproducible."""
+    """A role prompt is required; the output is frame-aligned.
+
+    Seeding is DuplexInference's for both generators; test_inference.py
+    checks that conversations are reproducible.
+    """
     import espnet3.systems.duplex.src.personaplex as module
 
     monkeypatch.setattr(
         module, "SILENCE_TOKENS", tuple(_TinyCodebooks.silence.tolist())
     )
     monkeypatch.setattr(module, "SINE_TOKENS", tuple(_TinyCodebooks.sine.tolist()))
-    speech = (0.1 * np.random.default_rng(0).standard_normal(64 * 4)).astype(np.float32)
+    # bfloat16 is slow on CPU: shorten the prompts' silences.
+    monkeypatch.setattr(module, "PROMPT_SILENCE_FRAMES", 1)
+    speech = (0.1 * np.random.default_rng(0).standard_normal(64 * 3)).astype(np.float32)
     with pytest.raises(ValueError, match="needs a role prompt"):
         tiny_personaplex(speech)
-    first = tiny_personaplex(speech, role_prompt="abc def")
-    second = tiny_personaplex(speech, role_prompt="abc def")
-    assert first["wav"].shape == speech.shape
-    np.testing.assert_array_equal(first["wav"], second["wav"])
+    out = tiny_personaplex(speech, role_prompt="abc")
+    assert out["wav"].shape == speech.shape
+    assert np.isfinite(out["wav"]).all()

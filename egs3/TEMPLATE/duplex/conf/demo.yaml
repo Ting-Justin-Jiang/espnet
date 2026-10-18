@@ -29,6 +29,10 @@ model:
   dir_or_tag: ${model.hf_repo}
   device: cuda
 
+# PersonaPlex's role prompt, the same for every conversation of the demo (for
+# example "You enjoy having a good conversation."); Moshi takes none.
+role_prompt:
+
 ##########################################################
 #                     UI DEFINITION                      #
 ##########################################################

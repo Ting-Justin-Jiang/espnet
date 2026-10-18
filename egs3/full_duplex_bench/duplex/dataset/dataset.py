@@ -36,7 +36,7 @@ class FullDuplexBenchDataset(BaseDataset):
     Examples:
         >>> dataset = FullDuplexBenchDataset("candor_turn_taking", ".", 24000)
         >>> sorted(dataset[0])
-        ['annotation', 'sample_id', 'speech', 'task', 'utt_id']
+        ['annotation', 'role_prompt', 'sample_id', 'speech', 'task', 'utt_id']
     """
 
     fields = {
@@ -45,6 +45,7 @@ class FullDuplexBenchDataset(BaseDataset):
         "task": str,
         "sample_id": str,
         "annotation": str,
+        "role_prompt": str,
     }
 
     def __init__(self, task: str, recipe_dir: str | Path, sample_rate: int) -> None:
@@ -54,6 +55,7 @@ class FullDuplexBenchDataset(BaseDataset):
         self.task = task
         self.sample_rate = sample_rate
         self.annotation = TASKS[task]["annotation"]
+        self.role_prompt = TASKS[task]["role_prompt"]
         task_dir = benchmark_root(recipe_dir) / task
         if not task_dir.is_dir():
             raise FileNotFoundError(
@@ -84,4 +86,5 @@ class FullDuplexBenchDataset(BaseDataset):
             "task": self.task,
             "sample_id": sample_dir.name,
             "annotation": annotation,
+            "role_prompt": self.role_prompt,
         }

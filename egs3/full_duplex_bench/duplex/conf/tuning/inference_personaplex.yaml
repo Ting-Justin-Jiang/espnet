@@ -1,0 +1,17 @@
+##########################################################
+#   FULL-DUPLEX-BENCH v1.0 INFERENCE SETTING: PERSONAPLEX #
+##########################################################
+# The test sets of conf/inference.yaml, run by PersonaPlex
+# (conf/model/personaplex.yaml) with the role prompt NVIDIA/personaplex's
+# README gives for each task's category (dataset/config.yaml).
+#
+# Quick usage:
+#   python run.py --stages infer --inference_config conf/tuning/inference_personaplex.yaml
+
+defaults:
+  - ../inference
+  - model: ../model/personaplex
+  - _self_
+
+exp_tag: personaplex
+input_key: [speech, role_prompt]

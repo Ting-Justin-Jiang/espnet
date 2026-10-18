@@ -64,11 +64,14 @@ class DuplexConversation:
 
     Args:
         model: The Moshi engine, shared by the conversations one at a time.
+        role_prompt: PersonaPlex's role prompt, the same for every
+            conversation; ``None`` for Moshi.
     """
 
-    def __init__(self, model: DuplexInference) -> None:
+    def __init__(self, model: DuplexInference, role_prompt: str | None) -> None:
         """Keep the model; the conversation starts with :meth:`start`."""
         self.model = model
+        self.role_prompt = role_prompt
         self.resampler: soxr.ResampleStream | None = None
         self.input_rate: int | None = None
         self.pending = np.zeros(0, dtype=np.float32)
@@ -83,7 +86,7 @@ class DuplexConversation:
         """
         if self.model.is_streaming:
             self.model.stop()
-        self.model.start()
+        self.model.start(self.role_prompt)
         self.resampler = None
         self.input_rate = None
         self.pending = np.zeros(0, dtype=np.float32)
@@ -160,7 +163,7 @@ def build_demo(demo_dir: Path, demo_config_path: Path | None = None):
     if demo_config_path is None:
         demo_config_path = demo_dir / "demo.yaml"
     config = load_config_with_defaults(str(demo_config_path))
-    conversation = DuplexConversation(build_model(config.model))
+    conversation = DuplexConversation(build_model(config.model), config.role_prompt)
 
     registry = DEFAULT_UI_ASSETS.clone()
     registry.register("microphone_stream", MicrophoneStreamUI)

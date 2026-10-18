@@ -21,7 +21,8 @@ class _HalfEcho:
         self.is_streaming = False
         self.frames = []
 
-    def start(self):
+    def start(self, role_prompt):
+        self.role_prompt = role_prompt
         self.is_streaming = True
 
     def stop(self):
@@ -39,10 +40,20 @@ def _microphone(seconds, rate=48000):
     return (8000 * np.sin(2 * np.pi * 220 * t)).astype(np.int16)
 
 
+def test_role_prompt_starts_every_conversation():
+    """A PersonaPlex demo opens each conversation with its role prompt."""
+    model = _HalfEcho()
+    conversation = DuplexConversation(model, "You enjoy having a good conversation.")
+    for _ in range(2):
+        conversation.start()
+        assert model.role_prompt == "You enjoy having a good conversation."
+        conversation.stop()
+
+
 def test_chunks_become_frames_and_replies():
     """Uneven microphone chunks are resampled and fed as whole 80 ms frames."""
     model = _HalfEcho()
-    conversation = DuplexConversation(model)
+    conversation = DuplexConversation(model, None)
     conversation.start()
     samples = _microphone(1.0)
     replies = []
@@ -65,7 +76,7 @@ def test_chunks_become_frames_and_replies():
 def test_no_reply_until_a_frame_completes():
     """A chunk that completes no frame returns no audio."""
     model = _HalfEcho()
-    conversation = DuplexConversation(model)
+    conversation = DuplexConversation(model, None)
     conversation.start()
     conversation(speech=(48000, _microphone(0.2)))
     out = conversation(speech=(48000, _microphone(0.01)))
@@ -78,7 +89,7 @@ def test_chunking_does_not_change_what_moshi_hears():
     heard = []
     for chunk in (len(samples), 1111):
         model = _HalfEcho()
-        conversation = DuplexConversation(model)
+        conversation = DuplexConversation(model, None)
         conversation.start()
         for start in range(0, len(samples), chunk):
             conversation(speech=(48000, samples[start : start + chunk]))
@@ -94,7 +105,7 @@ def test_chunking_does_not_change_what_moshi_hears():
 def test_restart_closes_the_open_conversation():
     """Starting again (a reloaded page) closes the conversation left open."""
     model = _HalfEcho()
-    conversation = DuplexConversation(model)
+    conversation = DuplexConversation(model, None)
     conversation.start()
     conversation(speech=(48000, _microphone(0.2)))
     conversation.start()
