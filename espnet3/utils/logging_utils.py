@@ -706,14 +706,19 @@ def build_qualified_name(obj) -> str:
         ```
     """
     cls = obj if isinstance(obj, type) else type(obj)
-    if not isinstance(obj, type) and cls.__module__ == "builtins":
+    # Extension types such as SWIG's SwigPyObject (inside a
+    # sentencepiece.SentencePieceProcessor) define no __module__.
+    module = getattr(cls, "__module__", None)
+    if module is None:
+        return cls.__name__
+    if not isinstance(obj, type) and module == "builtins":
         if hasattr(obj, "__len__"):
             try:
                 return f"{cls.__name__}(len={len(obj)})"
             except Exception:
                 pass
         return _truncate_text(str(obj))
-    return f"{cls.__module__}.{cls.__name__}"
+    return f"{module}.{cls.__name__}"
 
 
 def build_callable_name(func) -> str:

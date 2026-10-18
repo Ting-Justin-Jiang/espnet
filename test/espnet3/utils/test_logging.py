@@ -31,6 +31,7 @@ from espnet3.utils import logging_utils as elog
 # | test_log_dataloader_formats_human_readable            | Formats DataLoader info with key attributes                    | # noqa: E501
 # | test_log_dataloader_iter_factory_includes_batch_sampler_repr | Logs iterator factory with batch sampler repr           | # noqa: E501
 # | test_build_qualified_name_for_objects_and_classes     | Builds qualified names for objects, classes, and collections   | # noqa: E501
+# | test_build_qualified_name_without_module             | Names extension types that define no __module__                | # noqa: E501
 # | test_build_callable_name_for_functions_and_callables  | Builds callable names for functions and callable classes       | # noqa: E501
 
 
@@ -556,6 +557,16 @@ def test_build_qualified_name_for_objects_and_classes():
     assert build_qualified_name(LocalClass).endswith(".LocalClass")
     assert build_qualified_name(LocalClass()).endswith(".LocalClass")
     assert build_qualified_name([1, 2]).startswith("list(len=")
+
+
+def test_build_qualified_name_without_module():
+    """A SWIG object's type has no __module__; its name is still logged."""
+    import sentencepiece
+
+    from espnet3.utils.logging_utils import build_qualified_name
+
+    swig_object = sentencepiece.SentencePieceProcessor().this
+    assert build_qualified_name(swig_object) == "SwigPyObject"
 
 
 def test_build_callable_name_for_functions_and_callables():
