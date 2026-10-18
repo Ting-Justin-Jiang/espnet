@@ -4,7 +4,7 @@ import pytest
 from omegaconf import OmegaConf
 
 import espnet3.systems.base.system as sysmod
-from espnet3.contract.stages import stage_log_dir
+from espnet3.contract.stages import StageSpec, stage_log_dir
 from espnet3.systems.base.system import BaseSystem
 
 
@@ -346,3 +346,47 @@ def test_base_system_rejects_subclass_args():
     system = CustomSystem()
     with pytest.raises(TypeError):
         system.train(extra="oops")
+
+
+def test_base_system_create_dataset_reads_the_declared_config_role(
+    tmp_path, monkeypatch
+):
+    """A system whose create_dataset runs on the inference config reads that one."""
+
+    class InferenceOnlySystem(BaseSystem):
+        stages = (
+            StageSpec(name="create_dataset", config="inference", log_dir="data_dir"),
+        )
+
+    calls = []
+
+    class DummyBuilder:
+        def is_source_prepared(self, **kwargs):
+            calls.append(("is_source_prepared", kwargs))
+            return True
+
+        def is_built(self, **kwargs):
+            calls.append(("is_built", kwargs))
+            return True
+
+    class DummyModule:
+        DatasetBuilder = DummyBuilder
+
+    monkeypatch.setattr(
+        sysmod,
+        "load_dataset_module",
+        lambda data_src=None, recipe_dir=None: DummyModule(),
+    )
+    inference_cfg = OmegaConf.create(
+        {
+            "recipe_dir": str(tmp_path),
+            "create_dataset": {"recipe_dir": str(tmp_path)},
+            "dataset": {"test": [{"name": "test"}]},
+        }
+    )
+    InferenceOnlySystem(inference_config=inference_cfg).create_dataset()
+    kwargs = {"recipe_dir": str(tmp_path)}
+    assert calls == [("is_source_prepared", kwargs), ("is_built", kwargs)]
+
+    with pytest.raises(RuntimeError, match="inference_config.dataset must be set"):
+        InferenceOnlySystem(inference_config=OmegaConf.create({})).create_dataset()

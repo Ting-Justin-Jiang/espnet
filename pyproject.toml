@@ -280,6 +280,14 @@ sds = [
   "transformers",
 ]
 
+# Moshi (espnet3/systems/moshi) loads its released weights from safetensors.
+# kyutai's own `moshi` package is not a dependency: it pins torch<2.10, which
+# no supported torch satisfies, so the model is ported under
+# espnet3/systems/moshi/src instead.
+moshi = [
+  "safetensors",
+]
+
 # The browser demo (espnet2/bin/demo.py): `espnet demo` serves the OWSM app
 # the Hugging Face Spaces run. gradio is the only thing it needs beyond a bare
 # install, and it stays here rather than in the core dependencies because a
@@ -357,6 +365,7 @@ all = [
   "espnet[speechlm]",
   "espnet[egs2]",
   "espnet[mcp]",
+  "espnet[moshi]",
   "fairscale",
   "transformers",
   "evaluate",

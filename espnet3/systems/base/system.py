@@ -11,7 +11,12 @@ from espnet3.components.data.dataset_module import (
     load_dataset_module,
     parse_dataset_reference_config,
 )
-from espnet3.contract.stages import StageSpec, check_stage_contract
+from espnet3.contract.stages import (
+    StageContractError,
+    StageSpec,
+    check_stage_contract,
+    stage_spec,
+)
 from espnet3.publication.demo.packing import pack_demo as _pack_demo
 from espnet3.publication.demo.packing import upload_demo as _upload_demo
 from espnet3.systems.base.inference import infer
@@ -162,25 +167,35 @@ class BaseSystem:
     # Stage stubs (override in subclasses if needed)
     # ---------------------------------------------------------
     def create_dataset(self, *args, **kwargs):
-        """Create datasets from dataset references."""
+        """Create datasets from dataset references.
+
+        Reads the ``dataset``, ``recipe_dir`` and ``create_dataset`` blocks of
+        the config the ``create_dataset`` stage declares: the training config
+        here, the inference config for a system without a training stage.
+        """
         self._reject_stage_args("create_dataset", args, kwargs)
         logger.info(
             "%s.create_dataset(): starting dataset creation process",
             self.__class__.__name__,
         )
         start = time.perf_counter()
-        dataset_config = getattr(self.training_config, "dataset", None)
-        recipe_dir = getattr(self.training_config, "recipe_dir", None)
-        create_dataset_config = getattr(
-            self.training_config, "create_dataset", OmegaConf.create({})
-        )
+        role = stage_spec(type(self), "create_dataset").config
+        if not isinstance(role, str):
+            raise StageContractError(
+                f"{type(self).__name__} stage 'create_dataset' must declare one "
+                f"config role, not {role!r}"
+            )
+        config = getattr(self, f"{role}_config")
+        dataset_config = getattr(config, "dataset", None)
+        recipe_dir = getattr(config, "recipe_dir", None)
+        create_dataset_config = getattr(config, "create_dataset", OmegaConf.create({}))
         default_builder_kwargs = dict(create_dataset_config)
 
         prepared_any = False
 
         if dataset_config is None:
             raise RuntimeError(
-                "training_config.dataset must be set for create_dataset stage."
+                f"{role}_config.dataset must be set for create_dataset stage."
             )
 
         prepared_refs: set[str] = set()
@@ -211,7 +226,7 @@ class BaseSystem:
 
         if not prepared_any:
             raise RuntimeError(
-                "training_config.dataset must include at least one entry in "
+                f"{role}_config.dataset must include at least one entry in "
                 "dataset.train / dataset.valid / dataset.test."
             )
 
