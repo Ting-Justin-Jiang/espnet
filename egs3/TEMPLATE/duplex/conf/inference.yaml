@@ -1,0 +1,55 @@
+##########################################################
+#                   INFERENCE SETTING                    #
+##########################################################
+# Quick usage:
+#   python run.py --stages infer --inference_config conf/inference.yaml
+#
+# Shared default merged under every Moshi recipe's inference config. The
+# system runs the released model and has no training config, so this config
+# carries the experiment identity (exp_tag).
+
+defaults:
+  # The released Moshi, conf/model/moshiko.yaml, under `model`.
+  - model: moshiko
+  - _self_
+
+recipe_dir: .
+exp_tag: moshiko
+exp_dir: ${recipe_dir}/exp/${exp_tag}
+data_dir: ${recipe_dir}/data
+inference_dir: ${exp_dir}/${self_name:}
+
+# Keyword arguments of the recipe's DatasetBuilder (create_dataset stage).
+create_dataset:
+  recipe_dir: ${recipe_dir}
+
+dataset:
+  _target_: espnet3.components.data.data_organizer.DataOrganizer
+  _recursive_: false
+  recipe_dir: ${recipe_dir}
+  test:
+
+parallel:
+  env: local
+  n_workers: 1
+  # Replace a stale shard lock left by an interrupted run. Do not enable while
+  # another run may still be writing to the same output directory.
+  allow_overwrite_lock: false
+
+##########################################################
+#                 INPUT / OUTPUT SETTING                 #
+##########################################################
+# Each test item gives the user's audio as `speech` (mono, 24 kHz). One
+# conversation is run per item, so batch_size stays unset.
+input_key: speech
+batch_size:
+output_fn: egs3.TEMPLATE.duplex.src.inference.build_output
+output_artifacts:
+  wav:
+    type: wav
+    sample_rate: 24000
+
+provider:
+  _target_: espnet3.systems.base.inference_provider.InferenceProvider
+runner:
+  _target_: espnet3.systems.base.inference_runner.InferenceRunner

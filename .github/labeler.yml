@@ -184,9 +184,9 @@ SLM:
           - "espnet2/speechlm/**"
           - "test/espnet2/speechlm/**"
           - "egs2/*/speechlm1/**"
-          - "espnet3/systems/moshi/**"
-          - "test/espnet3/systems/moshi/**"
-          - "egs3/*/moshi/**"
+          - "espnet3/systems/duplex/**"
+          - "test/espnet3/systems/duplex/**"
+          - "egs3/*/duplex/**"
 
 # Singing voice synthesis. The repository has no SVS label and Music is
 # "Music processing", so svs* lands here - change this line if that is wrong.

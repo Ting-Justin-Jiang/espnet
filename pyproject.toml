@@ -280,11 +280,11 @@ sds = [
   "transformers",
 ]
 
-# Moshi (espnet3/systems/moshi) loads its released weights from safetensors.
-# kyutai's own `moshi` package is not a dependency: it pins torch<2.10, which
-# no supported torch satisfies, so the model is ported under
-# espnet3/systems/moshi/src instead.
-moshi = [
+# Full-duplex dialogue (espnet3/systems/duplex) loads the released Moshi-family
+# weights from safetensors. kyutai's own `moshi` package is not a dependency:
+# it pins torch<2.10, which no supported torch satisfies, so the model is
+# ported under espnet3/systems/duplex/src instead.
+duplex = [
   "safetensors",
 ]
 
@@ -365,7 +365,7 @@ all = [
   "espnet[speechlm]",
   "espnet[egs2]",
   "espnet[mcp]",
-  "espnet[moshi]",
+  "espnet[duplex]",
   "fairscale",
   "transformers",
   "evaluate",
