@@ -1,19 +1,24 @@
-"""Full-duplex Moshi inference: a user audio stream in, Moshi's stream out.
+"""Full-duplex inference: a user audio stream in, the model's stream out.
 
 Built by a recipe's ``infer`` stage (``model._target_:
-espnet3.systems.duplex.inference.MoshiInference``) and by the demo app. Both go
-through :meth:`MoshiInference.step`, which exchanges one 80 ms frame: it
+espnet3.systems.duplex.inference.DuplexInference``) and by the demo app. Both
+go through :meth:`DuplexInference.step`, which exchanges one 80 ms frame: it
 encodes the user's frame with Mimi, advances the language model by one frame
-and decodes Moshi's frame. The model is causal, so a recorded user turn fed
-frame by frame (:meth:`MoshiInference.__call__`) produces exactly what a live
-conversation over the same audio would, without a microphone and without a
-real-time constraint.
+and decodes the model's frame. The model is causal, so a recorded user turn
+fed frame by frame (:meth:`DuplexInference.__call__`) produces exactly what a
+live conversation over the same audio would, without a microphone and without
+a real-time constraint.
 
-Output alignment: frame ``j`` of the returned audio is what Moshi emits after
-user frame ``j``. Moshi's acoustic tokens are delayed by one frame, so the
-first ``max_delay`` output frames are silence. This is the layout of the
-Full-Duplex-Bench Moshi client, which writes one silent frame before the
-first audio it receives.
+Two generators share this loop (``generator``):
+
+- ``moshi``: kyutai's Moshi. Frame ``j`` of the returned audio is what Moshi
+  emits after user frame ``j``; its acoustic tokens are delayed by one frame,
+  so the first output frame is silence. This is the layout of the
+  Full-Duplex-Bench Moshi client.
+- ``personaplex``: NVIDIA's PersonaPlex. Each conversation starts with its
+  voice prompt and a role prompt (``role_prompt``); frame ``j`` of the
+  returned audio is what it emits after user frame ``j``, one frame later in
+  the conversation than Moshi would. This is the layout of its offline script.
 
 Reproducibility: attention runs on the memory-efficient or math kernels. The
 cuDNN attention kernel PyTorch picks by default on GH200 is not deterministic:
@@ -25,6 +30,7 @@ reproducible.
 from __future__ import annotations
 
 import math
+import tarfile
 import time
 from pathlib import Path
 
@@ -38,6 +44,7 @@ from torch.nn.attention import SDPBackend, sdpa_kernel
 from espnet3.systems.duplex.src.cuda_graph import CUDAGraphed
 from espnet3.systems.duplex.src.lm import LMGen, LMModel
 from espnet3.systems.duplex.src.mimi import MimiModel
+from espnet3.systems.duplex.src.personaplex import PersonaPlexGen, wrap_role_prompt
 from espnet3.systems.duplex.src.streaming import start_streaming, stop_streaming
 
 #: Text tokens Moshi emits while it has no word to say (padding, end of padding).
@@ -47,8 +54,8 @@ TEXT_PADDING_IDS = (0, 3)
 DETERMINISTIC_ATTENTION = [SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH]
 
 
-class MoshiInference:
-    """Moshi with Mimi, run one frame at a time.
+class DuplexInference:
+    """A full-duplex model with Mimi, run one frame at a time.
 
     Args:
         lm: Keyword arguments of
@@ -61,6 +68,7 @@ class MoshiInference:
         lm_file: Language model weights (safetensors).
         mimi_file: Mimi weights (safetensors).
         tokenizer_file: SentencePiece model of the text stream.
+        generator: ``"moshi"`` or ``"personaplex"`` (see the module docstring).
         temp: Audio sampling temperature.
         temp_text: Text sampling temperature.
         top_k: Audio top-k.
@@ -69,6 +77,8 @@ class MoshiInference:
             conversation's output does not depend on the ones before it.
         cuda_graph: Whether to replay each frame from CUDA graphs, which real
             time needs on GPU. Must be ``False`` on CPU.
+        voices_file: PersonaPlex only: archive of the released voice prompts.
+        voice_prompt: PersonaPlex only: voice prompt file in that archive.
         device: Device to run on.
     """
 
@@ -81,12 +91,15 @@ class MoshiInference:
         lm_file: str,
         mimi_file: str,
         tokenizer_file: str,
+        generator: str,
         temp: float,
         temp_text: float,
         top_k: int,
         top_k_text: int,
         seed: int,
         cuda_graph: bool,
+        voices_file: str | None = None,
+        voice_prompt: str | None = None,
         device: str = "cuda",
     ) -> None:
         """Load the codec, the language model and the text tokenizer."""
@@ -111,7 +124,19 @@ class MoshiInference:
         self.lm.load_state_dict(state, assign=True)
         self.lm.eval()
 
-        self.lm_gen = LMGen(self.lm, temp, temp_text, top_k, top_k_text, cuda_graph)
+        self.generator = generator
+        if generator == "moshi":
+            self.lm_gen = LMGen(self.lm, temp, temp_text, top_k, top_k_text, cuda_graph)
+            self.voice_prompt = None
+        elif generator == "personaplex":
+            self.lm_gen = PersonaPlexGen(
+                self.lm, temp, temp_text, top_k, top_k_text, cuda_graph
+            )
+            self.voice_prompt = _load_voice_prompt(
+                _resolve(hf_repo, revision, voices_file), voice_prompt
+            )
+        else:
+            raise ValueError(f"Unknown generator: {generator}")
         self.tokenizer = sentencepiece.SentencePieceProcessor(
             model_file=str(_resolve(hf_repo, revision, tokenizer_file))
         )
@@ -120,11 +145,24 @@ class MoshiInference:
         self._encode = None
         self._decode = None
 
-    def start(self) -> None:
-        """Open a conversation: fresh codec and language model streams, reseeded."""
+    def start(self, role_prompt: str | None = None) -> None:
+        """Open a conversation: fresh codec and language model streams, reseeded.
+
+        Args:
+            role_prompt: PersonaPlex's role prompt, required for PersonaPlex and
+                refused for Moshi.
+        """
+        if self.generator == "personaplex" and role_prompt is None:
+            raise ValueError("PersonaPlex needs a role prompt.")
+        if self.generator == "moshi" and role_prompt is not None:
+            raise ValueError("Moshi takes no role prompt.")
         torch.manual_seed(self.seed)
         start_streaming(self.mimi, 1)
         self.lm_gen.start(1, self.device)
+        if self.generator == "personaplex":
+            role_tokens = self.tokenizer.encode(wrap_role_prompt(role_prompt))
+            with sdpa_kernel(DETERMINISTIC_ATTENTION):
+                self.lm_gen.run_prompts(self.voice_prompt, role_tokens)
         # Graphs capture the stream state just created, so each conversation
         # gets its own.
         if self.cuda_graph:
@@ -166,17 +204,19 @@ class MoshiInference:
             tokens = self.lm_gen.step(self._encode(user))
             if tokens is None:
                 return np.zeros(self.frame_size, dtype=np.float32), ""
-            pcm = self._decode(tokens[:, 1:])[0, 0].cpu().numpy()
+            agent_codes = tokens[:, 1 : 1 + self.mimi.num_codebooks]
+            pcm = self._decode(agent_codes)[0, 0].cpu().numpy()
         text_token = int(tokens[0, 0, 0])
         if text_token in TEXT_PADDING_IDS:
             return pcm, ""
         return pcm, self.tokenizer.id_to_piece(text_token).replace("\u2581", " ")
 
-    def __call__(self, speech: np.ndarray) -> dict:
+    def __call__(self, speech: np.ndarray, role_prompt: str | None = None) -> dict:
         """Run a whole conversation over a recorded user stream.
 
         Args:
             speech: The user's audio, mono, at ``sample_rate``.
+            role_prompt: PersonaPlex's role prompt (see :meth:`start`).
 
         Returns:
             ``wav``: Moshi's audio, as long as ``speech`` and frame-aligned
@@ -191,7 +231,7 @@ class MoshiInference:
         pcms = []
         pieces = []
         seconds = []
-        self.start()
+        self.start(role_prompt)
         for index in range(num_frames):
             begin = time.perf_counter()
             frame = padded[index * self.frame_size : (index + 1) * self.frame_size]
@@ -205,6 +245,21 @@ class MoshiInference:
             "text": "".join(pieces).strip(),
             "step_ms": 1000.0 * float(np.median(seconds)),
         }
+
+
+def _load_voice_prompt(archive: Path, name: str) -> dict:
+    """Load a released PersonaPlex voice prompt from its archive.
+
+    The archive is extracted once next to itself (into ``voices/``).
+
+    Returns:
+        ``embeddings`` ``[N, 1, 1, dim]`` and the token ``cache`` it ends with.
+    """
+    voices_dir = archive.parent / "voices"
+    if not voices_dir.is_dir():
+        with tarfile.open(archive, "r:gz") as tar:
+            tar.extractall(archive.parent, filter="data")
+    return torch.load(voices_dir / name, map_location="cpu", weights_only=True)
 
 
 def _resolve(hf_repo: str | None, revision: str | None, filename: str) -> Path:

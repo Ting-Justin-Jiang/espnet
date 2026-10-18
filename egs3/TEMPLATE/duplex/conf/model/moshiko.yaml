@@ -4,13 +4,14 @@
 # The released Moshi, composed under `model:` by conf/inference.yaml and
 # conf/demo.yaml (`defaults: [model: moshiko]`). Sampling settings are those
 # of kyutai's moshi.server; the architecture blocks match the checkpoint.
-_target_: espnet3.systems.duplex.inference.MoshiInference
+_target_: espnet3.systems.duplex.inference.DuplexInference
 _convert_: all
 hf_repo: kyutai/moshiko-pytorch-bf16
 revision: 2bfc9ae6e89079a5cc7ed2a68436010d91a3d289
 lm_file: model.safetensors
 mimi_file: tokenizer-e351c8d8-checkpoint125.safetensors
 tokenizer_file: tokenizer_spm_32k_3.model
+generator: moshi
 temp: 0.8
 temp_text: 0.7
 top_k: 250

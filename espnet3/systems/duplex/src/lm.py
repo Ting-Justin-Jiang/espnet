@@ -154,23 +154,29 @@ class LMModel(nn.Module):
         tokens[:, 0] = self.text_card
         return tokens
 
-    def forward_text(self, sequence: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Run the temporal transformer.
+    def embed(self, sequence: torch.Tensor) -> torch.Tensor:
+        """Sum the stream embeddings: ``[B, 1 + n_q, S]`` to ``[B, S, dim]``."""
+        input_ = self.emb[0](sequence[:, 1])
+        for index in range(1, self.n_q):
+            input_ = input_ + self.emb[index](sequence[:, index + 1])
+        return input_ + self.text_emb(sequence[:, 0])
 
-        Args:
-            sequence: Tokens of shape ``[B, 1 + n_q, S]``.
+    def forward_embeddings(
+        self, input_: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Run the temporal transformer on summed embeddings ``[B, S, dim]``.
 
         Returns:
             Normalized hidden states ``[B, S, dim]`` and text logits
             ``[B, 1, S, text_card]``.
         """
-        input_ = self.emb[0](sequence[:, 1])
-        for index in range(1, self.n_q):
-            input_ = input_ + self.emb[index](sequence[:, index + 1])
-        input_ = input_ + self.text_emb(sequence[:, 0])
         transformer_out = self.out_norm(self.transformer(input_))
         text_logits = self.text_linear(transformer_out)[:, None]
         return transformer_out, text_logits
+
+    def forward_text(self, sequence: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Run the temporal transformer on tokens ``[B, 1 + n_q, S]``."""
+        return self.forward_embeddings(self.embed(sequence))
 
     def forward_depformer(
         self, index: int, token: torch.Tensor, transformer_out: torch.Tensor

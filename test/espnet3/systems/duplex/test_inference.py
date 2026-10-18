@@ -5,14 +5,14 @@ import pytest
 import torch
 from safetensors.torch import save_file
 
-from espnet3.systems.duplex.inference import MoshiInference
+from espnet3.systems.duplex.inference import DuplexInference
 from espnet3.systems.duplex.src.lm import LMModel
 from espnet3.systems.duplex.src.mimi import MimiModel
 
 
 @pytest.fixture
 def tiny_model(tmp_path, tiny_mimi_config, tiny_lm_config, tiny_tokenizer):
-    """Build a tiny MoshiInference from random checkpoints saved to disk."""
+    """Build a tiny DuplexInference from random checkpoints saved to disk."""
     torch.manual_seed(0)
     mimi = MimiModel(**tiny_mimi_config)
     for name, buffer in mimi.named_buffers():
@@ -20,7 +20,7 @@ def tiny_model(tmp_path, tiny_mimi_config, tiny_lm_config, tiny_tokenizer):
             buffer.copy_(torch.randn_like(buffer))
     save_file(mimi.state_dict(), tmp_path / "mimi.safetensors")
     save_file(LMModel(**tiny_lm_config).state_dict(), tmp_path / "lm.safetensors")
-    return MoshiInference(
+    return DuplexInference(
         lm=tiny_lm_config,
         mimi=tiny_mimi_config,
         hf_repo=None,
@@ -28,6 +28,7 @@ def tiny_model(tmp_path, tiny_mimi_config, tiny_lm_config, tiny_tokenizer):
         lm_file=str(tmp_path / "lm.safetensors"),
         mimi_file=str(tmp_path / "mimi.safetensors"),
         tokenizer_file=str(tiny_tokenizer),
+        generator="moshi",
         temp=0.8,
         temp_text=0.7,
         top_k=5,
@@ -74,7 +75,7 @@ def test_live_steps_match_offline_call(tiny_model):
 def test_cuda_graph_needs_a_cuda_device(tmp_path, tiny_mimi_config, tiny_lm_config):
     """cuda_graph on CPU would silently replay nothing, so it is refused."""
     with pytest.raises(ValueError, match="cuda_graph needs a CUDA device"):
-        MoshiInference(
+        DuplexInference(
             lm=tiny_lm_config,
             mimi=tiny_mimi_config,
             hf_repo=None,
@@ -82,6 +83,7 @@ def test_cuda_graph_needs_a_cuda_device(tmp_path, tiny_mimi_config, tiny_lm_conf
             lm_file=str(tmp_path / "unused"),
             mimi_file=str(tmp_path / "unused"),
             tokenizer_file=str(tmp_path / "unused"),
+            generator="moshi",
             temp=0.8,
             temp_text=0.7,
             top_k=5,
@@ -104,3 +106,9 @@ def test_step_rejects_partial_frames(tiny_model):
     with pytest.raises(ValueError, match="Expected 64 samples"):
         tiny_model.step(np.zeros(10, dtype=np.float32))
     tiny_model.stop()
+
+
+def test_moshi_refuses_a_role_prompt(tiny_model):
+    """Only PersonaPlex takes a role prompt."""
+    with pytest.raises(ValueError, match="Moshi takes no role prompt"):
+        tiny_model.start(role_prompt="You enjoy having a good conversation.")

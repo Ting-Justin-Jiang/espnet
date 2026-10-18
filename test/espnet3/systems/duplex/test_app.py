@@ -12,7 +12,7 @@ from espnet3.utils.config_utils import load_and_merge_config
 
 
 class _HalfEcho:
-    """Stands in for MoshiInference: replies to each frame with half of it."""
+    """Stands in for DuplexInference: replies to each frame with half of it."""
 
     sample_rate = 24000
     frame_size = 1920
@@ -135,6 +135,6 @@ def test_packed_demo_builds(tmp_path, monkeypatch):
 
     monkeypatch.setattr(module, "build_model", fake_build_model)
     ui = module.build_demo(out)
-    assert seen["target"] == "espnet3.systems.duplex.inference.MoshiInference"
+    assert seen["target"] == "espnet3.systems.duplex.inference.DuplexInference"
     labels = {getattr(block, "label", None) for block in ui.blocks.values()}
     assert {"You (microphone)", "Moshi", "Moshi's inner monologue"} <= labels

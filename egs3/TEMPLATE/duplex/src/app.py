@@ -2,7 +2,7 @@
 
 The browser streams the microphone to this app over the Gradio connection.
 Each chunk is resampled to 24 kHz and cut into 80 ms frames; every frame goes
-through ``MoshiInference.step``, which returns Moshi's next 80 ms, streamed
+through ``DuplexInference.step``, which returns Moshi's next 80 ms, streamed
 back to the browser. Moshi keeps listening while it speaks, so the user can
 interrupt it or back-channel. One conversation runs at a time: the model's
 stream state lives on the GPU, so the start, stream and stop events share one
@@ -26,7 +26,7 @@ from omegaconf import OmegaConf
 
 from espnet3.publication.demo.assets import DEFAULT_UI_ASSETS, UIAsset
 from espnet3.publication.demo.session import DemoSession
-from espnet3.systems.duplex.inference import MoshiInference
+from espnet3.systems.duplex.inference import DuplexInference
 from espnet3.utils.config_utils import load_config_with_defaults
 from espnet3.utils.logging_utils import configure_logging
 
@@ -66,7 +66,7 @@ class DuplexConversation:
         model: The Moshi engine, shared by the conversations one at a time.
     """
 
-    def __init__(self, model: MoshiInference) -> None:
+    def __init__(self, model: DuplexInference) -> None:
         """Keep the model; the conversation starts with :meth:`start`."""
         self.model = model
         self.resampler: soxr.ResampleStream | None = None
@@ -146,7 +146,7 @@ class DuplexConversation:
         return {"wav": (self.model.sample_rate, reply), "text": self.text.strip()}
 
 
-def build_model(model_config) -> MoshiInference:
+def build_model(model_config) -> DuplexInference:
     """Build the Moshi engine the demo config's ``model`` block describes."""
     arguments = OmegaConf.to_container(model_config, resolve=True)
     # Recorded for pack_demo; the weights come from the block's hf_repo.

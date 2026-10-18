@@ -10,7 +10,7 @@ def build_output(data, model_output, idx):
 
     Args:
         data: Dataset item with ``utt_id``.
-        model_output: Output of ``MoshiInference.__call__``.
+        model_output: Output of ``DuplexInference.__call__``.
         idx: Index of the item within its test set (unused).
 
     Returns:
