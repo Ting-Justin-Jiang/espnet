@@ -65,6 +65,8 @@ frame; this is also the layout of the Full-Duplex-Bench Moshi client.
 
 The simulation has no real-time constraint, so its output does not depend on
 the GPU. Whether a GPU could keep up live is what `step_ms` measures.
+`egs3/full_duplex_bench/moshi` uses this to evaluate Moshi on
+Full-Duplex-Bench.
 
 ## Talking to it with a microphone
 
@@ -86,6 +88,10 @@ python exp/moshiko/demo/app.py --demo-dir exp/moshiko/demo --server-port 7860
 ssh -N -L 7860:localhost:7860 -J <user>@<login-node> <user>@<gpu-node>
 # then open http://localhost:7860 and press record (use headphones)
 ```
+
+Driven by a recording in 80 ms microphone chunks at real-time pace, the
+packed app answered every chunk in at most 24 ms on a GH200 (median 23.7 ms),
+with two warm-up frames at the start of the conversation.
 
 Browsers give the microphone only to HTTPS pages and to `localhost`, which the
 tunnel provides. Gradio streams over the same HTTP connection, so one TCP

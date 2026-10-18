@@ -77,23 +77,24 @@ Moshi run:
 
 ## Results
 
-`exp_tag: moshiko`, `model.seed: 42424242` (the seed of `moshi.server`), on
-GH200. The 95% intervals bootstrap the samples of this run; they do not cover
-the variation between runs.
+Three runs on GH200 that differ only in `model.seed`: 42424242 (the seed of
+`moshi.server`, `exp_tag: moshiko`), 1 and 2. The last column bootstraps the
+samples of the first run (95%).
 
-| Task | Score | Published Moshi | This recipe | 95% CI |
-| :-- | :-- | --: | --: | :-- |
-| Pause handling, synthetic | TOR ↓ | 0.985 | 0.993 | [0.978, 1.000] |
-| Pause handling, Candor | TOR ↓ | 0.980 | 1.000 | [1.000, 1.000] |
-| Backchannel | TOR ↓ | 1.000 | 0.400 | [0.273, 0.527] |
-| Backchannel | Freq ↑ | 0.001 | 0.124 | |
-| Backchannel | JSD ↓ | 0.957 | 0.724 | |
-| Smooth turn-taking, Candor | TOR ↑ | 0.941 | 1.000 | [1.000, 1.000] |
-| Smooth turn-taking, Candor | Latency (s) ↓ | 0.265 | 0.000 | [0.000, 0.000] |
-| User interruption | TOR ↑ | 1.000 | 0.890 | [0.845, 0.930] |
-| User interruption | Latency (s) ↓ | 0.257 | 1.164 | [0.910, 1.437] |
+| Task | Score | Published Moshi | Seeds 42424242 / 1 / 2 | Mean ± SD | 95% CI, first run |
+| :-- | :-- | --: | :-- | :-- | :-- |
+| Pause handling, synthetic | TOR ↓ | 0.985 | 0.993 / 1.000 / 1.000 | 0.998 ± 0.004 | [0.978, 1.000] |
+| Pause handling, Candor | TOR ↓ | 0.980 | 1.000 / 1.000 / 1.000 | 1.000 ± 0.000 | [1.000, 1.000] |
+| Backchannel | TOR ↓ | 1.000 | 0.400 / 0.436 / 0.436 | 0.424 ± 0.021 | [0.273, 0.527] |
+| Backchannel | Freq ↑ | 0.001 | 0.124 / 0.165 / 0.143 | 0.144 ± 0.021 | |
+| Backchannel | JSD ↓ | 0.957 | 0.724 / 0.708 / 0.704 | 0.712 ± 0.011 | |
+| Smooth turn-taking, Candor | TOR ↑ | 0.941 | 1.000 / 1.000 / 1.000 | 1.000 ± 0.000 | [1.000, 1.000] |
+| Smooth turn-taking, Candor | Latency (s) ↓ | 0.265 | 0.000 / 0.000 / 0.000 | 0.000 ± 0.000 | [0.000, 0.000] |
+| User interruption | TOR ↑ | 1.000 | 0.890 / 0.775 / 0.865 | 0.843 ± 0.060 | [0.845, 0.930] |
+| User interruption | Latency (s) ↓ | 0.257 | 1.164 / 1.215 / 0.934 | 1.104 ± 0.150 | [0.910, 1.437] |
 
-A frame took 24 to 26 ms on every test set, a third of the 80 ms budget.
+The median frame took 23.5 to 23.6 ms on every test set, under a third of the
+80 ms budget.
 
 ### Reading the numbers
 
@@ -116,4 +117,4 @@ A frame took 24 to 26 ms on every test set, a third of the 80 ms budget.
 
 The published run differs in ways this recipe does not reproduce (its server
 implementation and version, real-time transport, an unseeded draw), and the
-gap is larger than the sampling uncertainty above.
+gap is larger than both the sampling uncertainty and the spread over seeds.
