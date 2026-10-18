@@ -8,6 +8,11 @@
 # system runs the released model and has no training config, so this config
 # carries the experiment identity (exp_tag).
 
+defaults:
+  # The released Moshi, conf/model/moshiko.yaml, under `model`.
+  - model: moshiko
+  - _self_
+
 recipe_dir: .
 exp_tag: moshiko
 exp_dir: ${recipe_dir}/exp/${exp_tag}
@@ -30,76 +35,6 @@ parallel:
   # Replace a stale shard lock left by an interrupted run. Do not enable while
   # another run may still be writing to the same output directory.
   allow_overwrite_lock: false
-
-##########################################################
-#                     MODEL SETTING                      #
-##########################################################
-# The released Moshi (male voice, "moshiko"). Sampling settings are those of
-# kyutai's moshi.server. The architecture blocks match the checkpoint.
-model:
-  _target_: espnet3.systems.moshi.inference.MoshiInference
-  _convert_: all
-  hf_repo: kyutai/moshiko-pytorch-bf16
-  revision: 2bfc9ae6e89079a5cc7ed2a68436010d91a3d289
-  lm_file: model.safetensors
-  mimi_file: tokenizer-e351c8d8-checkpoint125.safetensors
-  tokenizer_file: tokenizer_spm_32k_3.model
-  temp: 0.8
-  temp_text: 0.7
-  top_k: 250
-  top_k_text: 25
-  seed: 42424242
-  # Replay each frame from CUDA graphs (real time needs it); false on CPU.
-  cuda_graph: true
-  lm:
-    dim: 4096
-    num_heads: 32
-    num_layers: 32
-    hidden_scale: 4.125
-    context: 3000
-    max_period: 10000
-    text_card: 32000
-    card: 2048
-    n_q: 16
-    dep_q: 8
-    delays: [0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1]
-    depformer_dim: 1024
-    depformer_dim_feedforward: 4224
-    depformer_num_heads: 16
-    depformer_num_layers: 6
-  mimi:
-    sample_rate: 24000
-    frame_rate: 12.5
-    num_codebooks: 8
-    seanet:
-      channels: 1
-      dimension: 512
-      n_filters: 64
-      n_residual_layers: 1
-      ratios: [8, 6, 5, 4]
-      kernel_size: 7
-      last_kernel_size: 3
-      residual_kernel_size: 3
-      dilation_base: 2
-      compress: 2
-    transformer:
-      d_model: 512
-      num_heads: 8
-      num_layers: 8
-      dim_feedforward: 2048
-      context: 250
-      rope_max_period: 10000
-      norm: layer_norm
-      layer_scale: 0.01
-      gating: none
-      weights_per_step: 0
-    quantizer:
-      dimension: 256
-      input_dimension: 512
-      output_dimension: 512
-      n_q: 32
-      n_q_semantic: 1
-      bins: 2048
 
 ##########################################################
 #                 INPUT / OUTPUT SETTING                 #

@@ -1,0 +1,94 @@
+##########################################################
+#                    DEMO PACK SETTING                   #
+##########################################################
+# Quick usage:
+#   python run.py --stages pack_demo   --demo_config conf/demo.yaml
+#   python demo/app.py --demo-dir demo          # on a GPU machine
+#   python run.py --stages upload_demo --demo_config conf/demo.yaml
+#
+# A full-duplex conversation through the browser microphone: the browser
+# streams the microphone to the app, which feeds Moshi one 80 ms frame at a
+# time and streams Moshi's voice and text back. See the system README for
+# serving it from a cluster node.
+
+defaults:
+  # The released Moshi, conf/model/moshiko.yaml, under `model`.
+  - model: moshiko
+  - _self_
+
+recipe_dir: .
+exp_tag: moshiko
+exp_dir: ${recipe_dir}/exp/${exp_tag}
+
+##########################################################
+#                    MODEL SOURCE                        #
+##########################################################
+# The weights are downloaded from the Hub repository the model block names;
+# `dir_or_tag` records it for pack_demo and is not a model argument.
+model:
+  dir_or_tag: ${model.hf_repo}
+  device: cuda
+
+##########################################################
+#                     UI DEFINITION                      #
+##########################################################
+# `ui.app_script` is copied into the packed demo as `app.py`.
+# - `microphone_stream`: the user's microphone, streamed to Moshi
+# - `audio_stream`: Moshi's voice, streamed back
+# - `text`: Moshi's inner monologue so far
+ui:
+  app_script: ${config_path:../src/app.py}
+  title: ${set_corpus_and_system:} demo
+  description: >-
+    Press record and talk. Moshi listens and speaks at the same time, so you
+    can interrupt it or back-channel while it talks. Use headphones: Moshi
+    hears whatever reaches your microphone, its own voice included.
+  inputs:
+    - key: speech
+      type: microphone_stream
+      label: "You (microphone)"
+  outputs:
+    - key: wav
+      type: audio_stream
+      label: "Moshi"
+    - key: text
+      type: text
+      label: "Moshi's inner monologue"
+
+##########################################################
+#                    PACKING SETTING                     #
+##########################################################
+pack:
+  out_dir: demo
+  include: []
+  exclude: []
+  requirements:
+    - espnet[moshi,demo] @ git+https://github.com/espnet/espnet.git
+    - soxr
+  readme: ${config_path:../src/hf_demo_readme.md}
+  readme_context:
+    title: ${ui.title}
+    emoji: "\U0001f5e3️"
+    color_from: blue
+    color_to: green
+    sdk: gradio
+    app_file: app.py
+    pinned: "false"
+    license: cc-by-4.0
+    tags: |-
+      - espnet
+      - espnet3
+      - gradio
+      - full-duplex
+      - spoken-dialogue
+    hf_repo: ${upload_demo.hf_repo}
+    model_ref: ${model.dir_or_tag}
+
+##########################################################
+#                    UPLOAD SETTING                      #
+##########################################################
+upload_demo:
+  hf_repo: espnet/${set_corpus_and_system:}_${exp_tag}
+  update: false
+  delete_patterns:
+    - "*"
