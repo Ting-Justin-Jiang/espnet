@@ -6,6 +6,7 @@ import pytest
 import torch
 import torch.nn as nn
 from hydra.utils import instantiate
+from lightning.pytorch import Trainer
 from lightning.pytorch.callbacks import (
     LearningRateMonitor,
     ModelCheckpoint,
@@ -34,6 +35,8 @@ from espnet3.components.trainers.trainer import ESPnet3LightningTrainer
 # |                        | averaging and saving works correctly with dummy weights.  |
 # | test_get_default_callbacks_structure          | Checks structure and types of      |
 # |                                   | callbacks returned by get_default_callbacks(). |
+# | test_average_runs_after_the_checkpoints_it_averages | Lightning orders the |
+# |       | average after the ModelCheckpoints, so it sees this validation's save. |
 # | test_average_checkpoints_with_multiple_metrics| Confirms correct averaging for     |
 # |                |  multiple ModelCheckpoint instances with different monitor names. |
 # | test_output_filename_format                 | Ensures output filename is formatted |
@@ -45,8 +48,8 @@ from espnet3.components.trainers.trainer import ESPnet3LightningTrainer
 # Edge/Error Cases
 # | Test Name                                      | Description                       |
 # |-----------------------------------------------|------------------------------------|
-# | test_average_checkpoint_on_non_global_zero    | Ensures callback is skipped when   |
-# |                       | trainer.is_global_zero is False (e.g., non-main DDP rank). |
+# | test_average_checkpoint_on_non_global_zero    | Ensures only rank 0 averages, after|
+# |                 | every rank has taken the state dict (FSDP gathers it together). |
 # | test_average_checkpoint_with_inconsistent_keys| Raises KeyError if state_dict keys |
 # |                                               | differ across checkpoints. |
 # | test_average_checkpoint_with_int_and_float_mix| Confirms floats are averaged and   |
@@ -64,16 +67,19 @@ def dummy_state_dict():
     }
 
 
-def _mock_pl_module(*keys):
-    """Build a pl_module mock whose `state_dict()` exposes the given keys.
+def _mock_trainer(is_global_zero, *keys):
+    """Build a trainer mock whose strategy's model state dict has ``keys``.
 
-    `AverageCheckpointsCallback` uses `pl_module.state_dict().keys()` as the
-    reference key set to decide whether a `model.` prefix must be stripped
-    from the loaded checkpoints.
+    `AverageCheckpointsCallback` uses the keys of
+    `trainer.strategy.lightning_module_state_dict()` as the reference key set
+    to decide whether a `model.` prefix must be stripped from the loaded
+    checkpoints.
     """
-    module = mock.Mock()
-    module.state_dict.return_value = {key: None for key in keys}
-    return module
+    trainer = mock.Mock(is_global_zero=is_global_zero)
+    trainer.strategy.lightning_module_state_dict.return_value = {
+        key: None for key in keys
+    }
+    return trainer
 
 
 def test_average_checkpoints_callback_on_validation_end(tmp_path, dummy_state_dict):
@@ -97,13 +103,10 @@ def test_average_checkpoints_callback_on_validation_end(tmp_path, dummy_state_di
                 )
             ],
         )
-        trainer = mock.Mock()
-        trainer.is_global_zero = True
-
-        pl_module = _mock_pl_module(
-            "layer.weight", "layer.bias", "bn.num_batches_tracked"
+        trainer = _mock_trainer(
+            True, "layer.weight", "layer.bias", "bn.num_batches_tracked"
         )
-        callback.on_validation_end(trainer, pl_module=pl_module)
+        callback.on_validation_end(trainer, pl_module=mock.Mock())
 
         mock_save.assert_called_once()
 
@@ -137,6 +140,22 @@ def test_get_default_callbacks_structure():
     assert has_ave
 
 
+def test_average_runs_after_the_checkpoints_it_averages(tmp_path):
+    """Lightning runs Checkpoint callbacks last, in order.
+
+    The average must see the checkpoint that the ModelCheckpoint callbacks
+    save at the same validation, so it has to come after them.
+    """
+    trainer = Trainer(
+        callbacks=get_default_callbacks(exp_dir=str(tmp_path)), logger=False
+    )
+    order = [type(callback) for callback in trainer.callbacks]
+    average = order.index(AverageCheckpointsCallback)
+    assert all(
+        index < average for index, kind in enumerate(order) if kind is ModelCheckpoint
+    )
+
+
 def test_average_checkpoints_with_multiple_metrics(tmp_path, dummy_state_dict):
     """Test averaging for multiple ModelCheckpoints with different monitor names."""
     ckpt_paths_1 = [tmp_path / f"ckpt_loss_{i}.ckpt" for i in range(2)]
@@ -159,11 +178,10 @@ def test_average_checkpoints_with_multiple_metrics(tmp_path, dummy_state_dict):
                 ),
             ],
         )
-        trainer = mock.Mock(is_global_zero=True)
-        pl_module = _mock_pl_module(
-            "layer.weight", "layer.bias", "bn.num_batches_tracked"
+        trainer = _mock_trainer(
+            True, "layer.weight", "layer.bias", "bn.num_batches_tracked"
         )
-        callback.on_validation_end(trainer, pl_module=pl_module)
+        callback.on_validation_end(trainer, pl_module=mock.Mock())
 
         assert mock_save.call_count == 2
         filenames = [Path(call.args[1]).name for call in mock_save.call_args_list]
@@ -188,11 +206,10 @@ def test_output_filename_format(tmp_path, dummy_state_dict):
                 )
             ],
         )
-        trainer = mock.Mock(is_global_zero=True)
-        pl_module = _mock_pl_module(
-            "layer.weight", "layer.bias", "bn.num_batches_tracked"
+        trainer = _mock_trainer(
+            True, "layer.weight", "layer.bias", "bn.num_batches_tracked"
         )
-        callback.on_validation_end(trainer, pl_module=pl_module)
+        callback.on_validation_end(trainer, pl_module=mock.Mock())
 
         filename = Path(mock_save.call_args[0][1]).name
         assert filename == "some.metric.ave_3best.pth"
@@ -210,10 +227,12 @@ def test_average_checkpoint_on_non_global_zero(tmp_path, dummy_state_dict):
                 mock.Mock(best_k_models={"dummy.ckpt": 0.0}, monitor="valid/loss")
             ],
         )
-        trainer = mock.Mock(is_global_zero=False)
+        trainer = _mock_trainer(False, "layer.weight")
         callback.on_validation_end(trainer, pl_module=mock.Mock())
 
         mock_save.assert_not_called()
+        # A sharded model gathers its state dict on every rank together.
+        trainer.strategy.lightning_module_state_dict.assert_called_once()
 
 
 def test_average_checkpoint_with_inconsistent_keys(tmp_path):
@@ -247,9 +266,8 @@ def test_average_checkpoint_with_inconsistent_keys(tmp_path):
                 )
             ],
         )
-        trainer = mock.Mock(is_global_zero=True)
-        pl_module = _mock_pl_module("layer.weight")
-        callback.on_validation_end(trainer, pl_module=pl_module)
+        trainer = _mock_trainer(True, "layer.weight")
+        callback.on_validation_end(trainer, pl_module=mock.Mock())
 
 
 def test_average_checkpoint_with_int_and_float_mix(tmp_path):
@@ -288,9 +306,8 @@ def test_average_checkpoint_with_int_and_float_mix(tmp_path):
                 )
             ],
         )
-        trainer = mock.Mock(is_global_zero=True)
-        pl_module = _mock_pl_module("weight", "counter")
-        callback.on_validation_end(trainer, pl_module=pl_module)
+        trainer = _mock_trainer(True, "weight", "counter")
+        callback.on_validation_end(trainer, pl_module=mock.Mock())
 
         saved = mock_save.call_args[0][0]
         # Float averaged
@@ -341,9 +358,8 @@ def test_average_checkpoint_without_model_prefix(tmp_path):
                 )
             ],
         )
-        trainer = mock.Mock(is_global_zero=True)
-        pl_module = _mock_pl_module("encoder.weight", "decoder.bias")
-        callback.on_validation_end(trainer, pl_module=pl_module)
+        trainer = _mock_trainer(True, "encoder.weight", "decoder.bias")
+        callback.on_validation_end(trainer, pl_module=mock.Mock())
 
         saved = mock_save.call_args[0][0]
         assert torch.allclose(saved["encoder.weight"], torch.tensor([4.0, 3.0]))
@@ -374,9 +390,8 @@ def test_average_checkpoint_keys_mismatch_current_model(tmp_path, dummy_state_di
                 )
             ],
         )
-        trainer = mock.Mock(is_global_zero=True)
-        pl_module = _mock_pl_module("totally.unrelated.param")
-        callback.on_validation_end(trainer, pl_module=pl_module)
+        trainer = _mock_trainer(True, "totally.unrelated.param")
+        callback.on_validation_end(trainer, pl_module=mock.Mock())
 
 
 def test_average_checkpoint_with_no_checkpoints(tmp_path):
@@ -386,11 +401,12 @@ def test_average_checkpoint_with_no_checkpoints(tmp_path):
             output_dir=str(tmp_path),
             best_ckpt_callbacks=[mock.Mock(best_k_models={}, monitor="valid/loss")],
         )
-        trainer = mock.Mock(is_global_zero=True)
+        trainer = _mock_trainer(True)
         # This should not raise an exception
-        callback.on_validation_end(trainer, pl_module=_mock_pl_module())
+        callback.on_validation_end(trainer, pl_module=mock.Mock())
 
         mock_save.assert_not_called()
+        trainer.strategy.lightning_module_state_dict.assert_not_called()
 
 
 def test_duplicate_learning_rate_monitor_from_config():

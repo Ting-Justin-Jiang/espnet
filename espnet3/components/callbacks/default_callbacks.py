@@ -9,6 +9,7 @@ from typing import List, Tuple, Union
 import torch
 from lightning.pytorch.callbacks import (
     Callback,
+    Checkpoint,
     LearningRateMonitor,
     ModelCheckpoint,
     TQDMProgressBar,
@@ -69,7 +70,7 @@ def _format_metrics(metrics: dict[str, float], time_keys: tuple[str, ...]) -> st
 
 
 @typechecked
-class AverageCheckpointsCallback(Callback):
+class AverageCheckpointsCallback(Checkpoint):
     """A custom callback for weight averaging over the top-K checkpoints.
 
     This can be useful to smooth out fluctuations in weights across the best-performing
@@ -96,8 +97,11 @@ class AverageCheckpointsCallback(Callback):
     Notes:
         - The final filename will be:
             `{monitor_name}.ave_{K}best.pth`
-        - This callback only runs on the global rank 0 process
-            (for distributed training).
+        - Only the global rank 0 process averages and saves (for distributed
+            training); every rank takes the model's state dict first.
+        - It is a ``Checkpoint`` callback so that Lightning runs it after the
+            ``ModelCheckpoint`` callbacks, which come before it in the list:
+            the average then includes the checkpoint saved at this validation.
 
     Raises:
         KeyError: If checkpoint keys are inconsistent across the top-K
@@ -118,9 +122,17 @@ class AverageCheckpointsCallback(Callback):
         self.best_ckpt_callbacks = best_ckpt_callbacks
 
     def on_validation_end(self, trainer, pl_module):
-        """At the end of validation, average the top-K checkpoints and save."""
+        """At the end of validation, average the top-K checkpoints and save.
+
+        Every rank takes the model's state dict, through the strategy: a
+        sharded model (FSDP) gathers it collectively, so a call on rank 0
+        alone would wait for the other ranks forever. Rank 0 then averages.
+        """
+        if not any(callback.best_k_models for callback in self.best_ckpt_callbacks):
+            return
+        state_dict = trainer.strategy.lightning_module_state_dict()
         if trainer.is_global_zero:
-            reference_model_keys = set(pl_module.state_dict().keys())
+            reference_model_keys = set(state_dict.keys())
             for ckpt_callback in self.best_ckpt_callbacks:
                 checkpoints = list(ckpt_callback.best_k_models.keys())
                 if not checkpoints:
