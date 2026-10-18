@@ -1,0 +1,27 @@
+##########################################################
+#         FULL-DUPLEX-BENCH v1.0 METRIC SETTING          #
+##########################################################
+# Merged over egs3/TEMPLATE/moshi/conf/metrics.yaml.
+#
+# Quick usage (on a GPU node; needs NeMo and silero-vad, see README.md):
+#   python run.py --stages measure \
+#       --inference_config conf/inference.yaml --metrics_config conf/metrics.yaml
+#
+# FullDuplexBench scores every test set by its task's rule (see
+# src/metrics.py); a score a task does not define is NaN.
+
+metrics:
+  - metric:
+      _target_: egs3.full_duplex_bench.moshi.src.metrics.FullDuplexBench
+      asr_model: nvidia/parakeet-tdt-0.6b-v2
+      backchannel_reference: ${recipe_dir}/downloads/icc_gt_distribution.json
+      device: cuda
+    inputs:
+      wav: wav                       # <test_name>/wav.scp, Moshi's channel
+      task: dataset:task
+      annotation: dataset:annotation
+      sample_id: dataset:sample_id
+  - metric:
+      _target_: espnet3.systems.moshi.metrics.step_time.StepTime
+    inputs:
+      step_ms: step_ms

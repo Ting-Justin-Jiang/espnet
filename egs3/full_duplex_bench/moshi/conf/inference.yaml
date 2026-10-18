@@ -1,0 +1,40 @@
+##########################################################
+#        FULL-DUPLEX-BENCH v1.0 INFERENCE SETTING        #
+##########################################################
+# Merged over egs3/TEMPLATE/moshi/conf/inference.yaml, so only the values this
+# recipe sets are listed here.
+#
+# Quick usage:
+#   python run.py --stages create_dataset infer --inference_config conf/inference.yaml
+#
+# Each task is one test set. For every sample, Moshi listens to the user's
+# recorded stream (input.wav) frame by frame. Its own stream, frame-aligned
+# with the input, is written as a wav file listed in <inference_dir>/<task>/wav.scp.
+
+dataset:
+  test:
+    - name: candor_pause_handling
+      data_src_args:
+        task: candor_pause_handling
+        recipe_dir: ${recipe_dir}
+        sample_rate: 24000
+    - name: candor_turn_taking
+      data_src_args:
+        task: candor_turn_taking
+        recipe_dir: ${recipe_dir}
+        sample_rate: 24000
+    - name: icc_backchannel
+      data_src_args:
+        task: icc_backchannel
+        recipe_dir: ${recipe_dir}
+        sample_rate: 24000
+    - name: synthetic_pause_handling
+      data_src_args:
+        task: synthetic_pause_handling
+        recipe_dir: ${recipe_dir}
+        sample_rate: 24000
+    - name: synthetic_user_interruption
+      data_src_args:
+        task: synthetic_user_interruption
+        recipe_dir: ${recipe_dir}
+        sample_rate: 24000
