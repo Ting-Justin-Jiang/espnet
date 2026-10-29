@@ -241,11 +241,11 @@ class DuplexInference:
             role_prompt: PersonaPlex's role prompt (see :meth:`start`).
 
         Returns:
-            ``wav``: Moshi's audio, as long as ``speech`` and frame-aligned
-            with it; ``text``: Moshi's inner-monologue text; ``step_ms``:
-            median wall-clock time of a frame (real time requires under 80 ms),
-            which the first frames, slower as they capture the CUDA graphs,
-            do not move.
+            ``wav``: the model's audio, as long as ``speech`` and
+            frame-aligned with it; ``text``: its inner-monologue text;
+            ``step_ms``: the median wall-clock time of a frame (real time
+            requires under 80 ms). A median, so that the first frames, slow
+            while they capture the CUDA graphs, barely change it.
 
         Raises:
             ValueError: If ``speech`` is not mono at ``sample_rate``.
