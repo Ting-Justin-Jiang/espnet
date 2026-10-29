@@ -50,7 +50,7 @@ parallel:
 
 ## Requirements
 
-`measure` transcribes Moshi's channel with the benchmark's ASR,
+`measure` transcribes the model's channel with the benchmark's ASR,
 `nvidia/parakeet-tdt-0.6b-v2`, through NeMo, and segments it with Silero VAD:
 
 ```bash
@@ -65,97 +65,104 @@ silero-vad 6.2.3 and lightning 2.4.0.
 
 The metrics are a port of the benchmark's scripts (`src/metrics.py`). Laying
 our outputs and their transcripts out as the benchmark expects and scoring
-them with its own `eval_*.py` (commit 3e799c4) gives the numbers below to the
-last printed digit, on all five test sets. What differs from the published
-Moshi run:
+them with its own `eval_*.py` (commit 3e799c4) gives the same numbers to the
+last printed digit, on all five test sets. The relevance score of user
+interruption needs the OpenAI API and is not computed.
 
-- **Simulated call.** The published run streamed `input.wav` in real time to
-  kyutai's `moshi.server` over a WebSocket, Opus-compressed. Here the infer
-  stage feeds the same audio frame by frame to the same model, uncompressed
-  and with no real-time constraint. The output layout is the client's: one
-  silent frame, then Moshi's frames, as long as the input.
-- **Sampling.** Moshi samples its tokens, so its behaviour varies from run to
-  run. Each conversation here is seeded (`model.seed`) and computed with
-  deterministic kernels, so the run is reproducible; the published run was
-  one unseeded draw.
-- **No GPT-4o score.** The relevance score of user interruption needs the
-  OpenAI API and is not computed.
+Each model is reported three ways, all scored by this recipe's `measure`:
+
+- **Paper**: the published row (Moshi from the Full-Duplex-Bench paper,
+  PersonaPlex from its own paper; both are on the benchmark's leaderboard).
+- **Official code**: the evaluation path the benchmark prescribes, run on the
+  same GH200 node with the released checkpoint. For Moshi, kyutai's
+  `moshi.server` (`moshi==0.2.13`) driven by the benchmark's own client
+  (`v1_v1.5/model_inference/moshi/inference.py`), which streams `input.wav`
+  as Opus over a WebSocket at real-time pace and records the reply as it
+  arrives. 2 of the server's 160,000 frames took over 80 ms (at most
+  90 ms); the client records frames as they arrive, so they do not shift the
+  recording. The client is written against sphn 0.1: with sphn 0.2, which
+  the server needs, it silently records silence, so it runs with sphn
+  0.1.12. For PersonaPlex, NVIDIA's `moshi/offline.py` (the benchmark points
+  to it), voice `NATF2.pt`, the benchmark's role prompts.
+- **ESPnet3**: this recipe, three seeds (`model.seed`).
+
+Seeds matter more than the number of samples suggests. A conversation is
+reseeded when it starts, so every conversation of a run draws the same
+random numbers at the same frames: whether the model speaks up in its first
+second, for one, is then decided alike across a whole test set. Two
+PersonaPlex runs differ by up to 0.18 in pause-handling TOR, about four
+times what independent conversations would give. The tables therefore give
+the mean and standard deviation over seeds, against which the official
+code's single run is read.
 
 ## Results
 
-Three runs on GH200 that differ only in `model.seed`: 42424242 (the seed of
-`moshi.server`, `exp_tag: moshiko`), 1 and 2. The last column bootstraps the
-samples of the first run (95%).
+Lower is better for ↓, higher for ↑. Latency is in seconds.
 
-| Task | Score | Published Moshi | Seeds 42424242 / 1 / 2 | Mean ± SD | 95% CI, first run |
-| :-- | :-- | --: | :-- | :-- | :-- |
-| Pause handling, synthetic | TOR ↓ | 0.985 | 0.993 / 1.000 / 1.000 | 0.998 ± 0.004 | [0.978, 1.000] |
-| Pause handling, Candor | TOR ↓ | 0.980 | 1.000 / 1.000 / 1.000 | 1.000 ± 0.000 | [1.000, 1.000] |
-| Backchannel | TOR ↓ | 1.000 | 0.400 / 0.436 / 0.436 | 0.424 ± 0.021 | [0.273, 0.527] |
-| Backchannel | Freq ↑ | 0.001 | 0.124 / 0.165 / 0.143 | 0.144 ± 0.021 | |
-| Backchannel | JSD ↓ | 0.957 | 0.724 / 0.708 / 0.704 | 0.712 ± 0.011 | |
-| Smooth turn-taking, Candor | TOR ↑ | 0.941 | 1.000 / 1.000 / 1.000 | 1.000 ± 0.000 | [1.000, 1.000] |
-| Smooth turn-taking, Candor | Latency (s) ↓ | 0.265 | 0.000 / 0.000 / 0.000 | 0.000 ± 0.000 | [0.000, 0.000] |
-| User interruption | TOR ↑ | 1.000 | 0.890 / 0.775 / 0.865 | 0.843 ± 0.060 | [0.845, 0.930] |
-| User interruption | Latency (s) ↓ | 0.257 | 1.164 / 1.215 / 0.934 | 1.104 ± 0.150 | [0.910, 1.437] |
+### Moshi
 
-The median frame took 23.5 to 23.6 ms on every test set, under a third of the
-80 ms budget.
+| Task | Score | Paper | Official pipeline, 1 run | ESPnet3, 3 seeds |
+| :-- | :-- | --: | --: | --: |
+| Pause, synthetic | TOR ↓ | 0.985 | 1.000 | 0.998 ± 0.004 |
+| Pause, Candor | TOR ↓ | 0.980 | 1.000 | 1.000 ± 0.000 |
+| Backchannel | TOR ↓ | 1.000 | 0.291 | 0.424 ± 0.021 |
+| Backchannel | Freq ↑ | 0.001 | 0.172 | 0.144 ± 0.021 |
+| Backchannel | JSD ↓ | 0.957 | 0.693 | 0.712 ± 0.011 |
+| Turn-taking | TOR ↑ | 0.941 | 1.000 | 1.000 ± 0.000 |
+| Turn-taking | Latency (s) ↓ | 0.265 | 0.000 | 0.000 ± 0.000 |
+| Interruption | TOR ↑ | 1.000 | 0.890 | 0.843 ± 0.060 |
+| Interruption | Latency (s) ↓ | 0.257 | 0.883 | 1.104 ± 0.150 |
+
+### PersonaPlex
+
+| Task | Score | Paper | NVIDIA offline.py, 1 run | ESPnet3, 3 seeds |
+| :-- | :-- | --: | --: | --: |
+| Pause, synthetic | TOR ↓ | 0.584 | 0.212 | 0.263 ± 0.070 |
+| Pause, Candor | TOR ↓ | 0.662 | 0.343 | 0.401 ± 0.098 |
+| Backchannel | TOR ↓ | 0.327 | 0.309 | 0.188 ± 0.042 |
+| Backchannel | Freq ↑ | 0.025 | 0.103 | 0.113 ± 0.005 |
+| Backchannel | JSD ↓ | 0.649 | 0.767 | 0.747 ± 0.003 |
+| Turn-taking | TOR ↑ | 0.992 | 0.941 | 0.952 ± 0.013 |
+| Turn-taking | Latency (s) ↓ | 0.070 | 0.428 | 0.357 ± 0.146 |
+| Interruption | TOR ↑ | 1.000 | 0.930 | 0.938 ± 0.013 |
+| Interruption | Latency (s) ↓ | 0.400 | 0.182 | 0.198 ± 0.011 |
+
+A median frame took 23.5 ms for Moshi and 29.7 ms for PersonaPlex (its
+depformer samples 16 codebooks, Moshi's 8), within the 80 ms of a frame.
 
 ### Reading the numbers
 
-- **Moshi greets first.** In all 119 turn-taking conversations Moshi opens
-  with a greeting ("Hey, how are you doing?") within the first second, while
-  the user is still talking. The benchmark measures latency from Moshi's
-  first word, so every turn-taking latency is clipped to 0, and the greeting
-  alone counts as taking the turn in pause handling.
-- **Backchannels.** On the ICC monologues Moshi mostly listens and says short
-  "Yeah." backchannels, so it rarely takes the turn; the published run took
-  it on every sample.
-- **Interruptions.** The median latency after an interruption is 0.32 s,
-  near the published mean; a tail of late replies raises the mean to 1.16 s.
-- **This is Moshi, not the port.** kyutai's own `moshi==0.2.13`, fed the same
-  frames, produces the same audio and text bit for bit, greeting included.
-- **Not the codec.** Round-tripping the user audio through Opus (libopus,
-  24 kbit/s VoIP, as kyutai's client and server do) changes little: on the
-  backchannel set TOR 0.255, Freq 0.170, JSD 0.718; on turn-taking TOR 1.000,
-  latency 0.000, and Moshi still greets in all 119 conversations.
-
-The published run differs in ways this recipe does not reproduce (its server
-implementation and version, real-time transport, an unseeded draw), and the
-gap is larger than both the sampling uncertainty and the spread over seeds.
-
-## PersonaPlex
-
-`conf/tuning/inference_personaplex.yaml` runs `nvidia/personaplex-7b-v1`
-with the voice prompt `NATF2.pt` (the example of NVIDIA's README; the paper
-does not say which voice its Full-Duplex-Bench run used) and, for each test
-set, the role prompt NVIDIA's README gives for its category: "You enjoy
-having a good conversation." for pause handling, backchannel and
-turn-taking, the teacher prompt for user interruption. Sampling follows
-NVIDIA's offline script; the run is one seeded draw (42424242). The last
-column bootstraps the samples (95%).
-
-| Task | Score | Published PersonaPlex | ESPnet3 PersonaPlex | 95% CI |
-| :-- | :-- | --: | --: | :-- |
-| Pause handling, synthetic | TOR ↓ | 0.584 | 0.212 | [0.146, 0.285] |
-| Pause handling, Candor | TOR ↓ | 0.662 | 0.333 | [0.273, 0.398] |
-| Backchannel | TOR ↓ | 0.327 | 0.236 | [0.127, 0.345] |
-| Backchannel | Freq ↑ | 0.025 | 0.107 | |
-| Backchannel | JSD ↓ | 0.649 | 0.749 | |
-| Smooth turn-taking, Candor | TOR ↑ | 0.992 | 0.941 | [0.899, 0.983] |
-| Smooth turn-taking, Candor | Latency (s) ↓ | 0.070 | 0.288 | [0.188, 0.401] |
-| User interruption | TOR ↑ | 1.000 | 0.950 | [0.920, 0.980] |
-| User interruption | Latency (s) ↓ | 0.400 | 0.208 | [0.189, 0.228] |
-
-The median frame took 29.7 ms on every test set: the depformer samples 16
-codebooks, Moshi's 8.
-
-- **No greeting.** Unlike Moshi, PersonaPlex does not open the call. Its
-  median turn-taking latency, 0.05 s, is near the published mean; 53 of its
-  112 replies start before the user's turn ends (latency 0), and a tail of
-  late replies raises the mean to 0.29 s.
-- **Pauses.** It takes the turn in a user's pause about half as often as
-  the published run, by more than the sampling uncertainty. The published
-  run's voice prompt and draw are not known, and the protocol differences of
-  the Moshi run above (simulated call, seeding, no GPT-4o score) apply.
+- **ESPnet3 runs the official models.** The port is bit-exact with kyutai's
+  `moshi==0.2.13` on Moshi, eager and with CUDA graphs, and emits the same
+  text and audio tokens as NVIDIA's `offline.py` on PersonaPlex under greedy
+  sampling. With sampling, conversation by conversation, the official runs
+  do not differ from ESPnet3's seed-42424242 run in turn-over rate on any
+  task (Fisher's exact test, p ≥ 0.32), nor in latency (Mann-Whitney U,
+  p ≥ 0.12, but for PersonaPlex's interruption latency, p = 0.03 with equal
+  medians of 0.24 s).
+- **Moshi greets first, with its own server too.** In every pause-handling,
+  backchannel and turn-taking conversation Moshi opens with a greeting
+  ("Good day. How is it going?") within its first two seconds, while the
+  user is still talking, through kyutai's server as through ESPnet3. The
+  greeting counts as taking the turn in pause handling, and turn-taking
+  latency is measured from the model's first word, so it is 0. The published
+  Moshi row (latency 0.265 s, backchannel TOR 1.000) is not what the
+  released model does through the official pipeline; the paper does not
+  give the version or settings it ran.
+- **Opus lowers Moshi's backchannel TOR.** The official client sends the
+  user's audio as Opus. Its backchannel TOR, 0.291, is below ESPnet3's; an
+  Opus round trip of the user audio before ESPnet3 gives 0.255.
+- **PersonaPlex takes the turn less than published.** Its pause-handling
+  TOR is about half the published value, with NVIDIA's own code as with
+  ESPnet3, and on a second voice too (`NATM1.pt`: synthetic pauses 0.161,
+  turn-taking TOR 0.950). Most of these turn-overs start before the user's
+  first pause: the model speaks up early in some conversations, and how
+  often depends on the seed. The paper does not give its voice prompt or
+  sampling draw; the released checkpoint and script do not reproduce its
+  pause numbers.
+- **Open: PersonaPlex's backchannel TOR.** NVIDIA's code took the turn in
+  0.309 and 0.364 of the backchannel conversations (two seeds), ESPnet3 in
+  0.164 to 0.236. The ICC inputs are 48 kHz; resampling them with sphn, as
+  NVIDIA's script does, instead of torchaudio, as the benchmark's client
+  does, gives ESPnet3 0.255. With this run-to-run spread the remaining
+  difference is not established either way.
