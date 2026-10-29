@@ -1,0 +1,21 @@
+##########################################################
+#         OTOSPEECH FULL-DUPLEX METRIC SETTING           #
+##########################################################
+# Merged over egs3/TEMPLATE/duplex/conf/metrics.yaml: Full-Duplex-Bench's
+# scores, as egs3/full_duplex_bench/duplex/conf/metrics.yaml computes them.
+
+metrics:
+  - metric:
+      _target_: egs3.full_duplex_bench.duplex.src.metrics.FullDuplexBench
+      asr_model: nvidia/parakeet-tdt-0.6b-v2
+      backchannel_reference: ${recipe_dir}/../../full_duplex_bench/duplex/downloads/icc_gt_distribution.json
+      device: cuda
+    inputs:
+      wav: wav
+      task: dataset:task
+      annotation: dataset:annotation
+      sample_id: dataset:sample_id
+  - metric:
+      _target_: espnet3.systems.duplex.metrics.step_time.StepTime
+    inputs:
+      step_ms: step_ms

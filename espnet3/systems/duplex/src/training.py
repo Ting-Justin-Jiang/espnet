@@ -3,10 +3,10 @@
 A training item is a window of a two-channel conversation and the words of
 the model's channel in it:
 
-- ``speech``: ``[N, 2]`` float32 at Mimi's sample rate; channel 0 is the
-  speaker the model learns to be, channel 1 the user.
-- ``words``: ``(word, start, end)`` of channel 0, in seconds from the start
-  of the window.
+- ``speech``: two-channel :class:`Audio` at Mimi's sample rate; channel 0
+  is the speaker the model learns to be, channel 1 the user.
+- ``words``: the words of channel 0 as ``segments`` (``text``, ``start``,
+  ``end``), in seconds from the start of the window.
 
 :class:`TextStream`, the dataset preprocessor, turns the words into the
 model's text stream. :class:`DuplexLM`, the model, encodes both channels with
@@ -28,6 +28,7 @@ from safetensors.torch import load_file
 from torch import nn
 from torch.nn import functional as F
 
+from espnet3.contract.kinds.audio import Audio
 from espnet3.systems.duplex.inference import resolve_file
 from espnet3.systems.duplex.src.lm import (
     END_OF_TEXT_PADDING_ID,
@@ -69,32 +70,46 @@ class TextStream:
         self.tokenizer = sentencepiece.SentencePieceProcessor(
             model_file=str(resolve_file(hf_repo, revision, tokenizer_file))
         )
+        self.sample_rate = sample_rate
         self.frame_size = int(sample_rate / frame_rate)
         self.frame_rate = frame_rate
 
     def __call__(self, sample: dict) -> dict:
-        """Return ``speech`` and its text stream ``text`` (int64, one per frame)."""
-        speech = sample["speech"]
-        if speech.ndim != 2 or speech.shape[1] != 2:
-            raise ValueError(f"speech must be [N, 2], got {speech.shape}.")
-        num_frames = math.ceil(speech.shape[0] / self.frame_size)
+        """Return ``speech`` and its text stream ``text`` (int64, one per frame).
+
+        ``speech`` comes back as a ``[N, 2]`` float32 array, time first, as
+        the collate function pads it.
+
+        Raises:
+            ValueError: If ``speech`` is not two channels at ``sample_rate``.
+        """
+        speech: Audio = sample["speech"]
+        if speech.rate != self.sample_rate or speech.channels != 2:
+            raise ValueError(
+                f"speech must be 2 channels at {self.sample_rate} Hz, got "
+                f"{speech.channels} at {speech.rate} Hz."
+            )
+        num_frames = math.ceil(speech.array.shape[1] / self.frame_size)
         words = sorted(
-            (word for word in sample["words"] if word[1] < word[2]),
-            key=lambda word: word[1],
+            (word for word in sample["words"] if word["start"] < word["end"]),
+            key=lambda word: word["start"],
         )
         text = [TEXT_PADDING_ID] * num_frames
         pending: list[int] = []
         index = 0
         for frame in range(num_frames):
-            while index < len(words) and words[index][1] * self.frame_rate < frame + 1:
-                pending = self.tokenizer.encode(words[index][0].strip())
+            while (
+                index < len(words)
+                and words[index]["start"] * self.frame_rate < frame + 1
+            ):
+                pending = self.tokenizer.encode(words[index]["text"].strip())
                 index += 1
             if pending:
                 if frame > 0 and text[frame - 1] == TEXT_PADDING_ID:
                     text[frame - 1] = END_OF_TEXT_PADDING_ID
                 text[frame] = pending.pop(0)
         return {
-            "speech": speech.astype(np.float32),
+            "speech": np.ascontiguousarray(speech.array.T),
             "text": np.asarray(text, dtype=np.int64),
         }
 

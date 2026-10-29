@@ -1,0 +1,16 @@
+##########################################################
+#        OTOSPEECH FULL-DUPLEX PUBLICATION SETTING       #
+##########################################################
+# Merged over egs3/TEMPLATE/duplex/conf/publication.yaml, which packs the
+# inference config with the averaged checkpoint (exp/<exp_tag>/model_pack).
+#
+# Quick usage:
+#   python run.py --stages pack_model --training_config conf/training.yaml \
+#       --inference_config conf/inference.yaml \
+#       --publication_config conf/publication.yaml
+
+pack_model:
+  readme_context:
+    description: Moshi fine-tuned on otoSpeech-full-duplex-processed-141h.
+    license: cc-by-4.0
+    lang: en

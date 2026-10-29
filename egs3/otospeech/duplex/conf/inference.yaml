@@ -1,0 +1,51 @@
+##########################################################
+#        OTOSPEECH FULL-DUPLEX INFERENCE SETTING         #
+##########################################################
+# Merged over egs3/TEMPLATE/duplex/conf/inference.yaml.
+#
+# Quick usage (download Full-Duplex-Bench first, with its own recipe):
+#   python run.py --stages infer measure --training_config conf/training.yaml \
+#       --inference_config conf/inference.yaml --metrics_config conf/metrics.yaml
+#
+# The fine-tuned model is evaluated on Full-Duplex-Bench v1.0, read through
+# that recipe's dataset module, so its scores compare with the released
+# models' in egs3/full_duplex_bench/duplex.
+
+fdb_dir: ${recipe_dir}/../../full_duplex_bench/duplex
+
+model:
+  # The checkpoint with the lowest validation loss.
+  lm_checkpoint: ${exp_dir}/valid.loss.ave_1best.pth
+
+dataset:
+  test:
+    - name: candor_pause_handling
+      data_src: full_duplex_bench/duplex
+      data_src_args:
+        task: candor_pause_handling
+        recipe_dir: ${fdb_dir}
+        sample_rate: 24000
+    - name: candor_turn_taking
+      data_src: full_duplex_bench/duplex
+      data_src_args:
+        task: candor_turn_taking
+        recipe_dir: ${fdb_dir}
+        sample_rate: 24000
+    - name: icc_backchannel
+      data_src: full_duplex_bench/duplex
+      data_src_args:
+        task: icc_backchannel
+        recipe_dir: ${fdb_dir}
+        sample_rate: 24000
+    - name: synthetic_pause_handling
+      data_src: full_duplex_bench/duplex
+      data_src_args:
+        task: synthetic_pause_handling
+        recipe_dir: ${fdb_dir}
+        sample_rate: 24000
+    - name: synthetic_user_interruption
+      data_src: full_duplex_bench/duplex
+      data_src_args:
+        task: synthetic_user_interruption
+        recipe_dir: ${fdb_dir}
+        sample_rate: 24000

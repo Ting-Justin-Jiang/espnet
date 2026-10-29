@@ -33,10 +33,11 @@ exp_dir: ${recipe_dir}/exp/${exp_tag}
 ##########################################################
 #                    DATASET DEFINITION                  #
 ##########################################################
-# Each item is a window of a two-channel conversation: `speech` [N, 2] at
-# 24 kHz (channel 0 is the speaker the model learns to be, channel 1 the
-# user) and `words`, the (word, start, end) of channel 0 in seconds from the
-# window start. TextStream turns the words into the model's text stream.
+# Each item is a window of a two-channel conversation: `speech`, a
+# two-channel Audio at 24 kHz (channel 0 is the speaker the model learns to
+# be, channel 1 the user), and `words`, the words of channel 0 as segments
+# (text, start, end in seconds from the window start). TextStream turns the
+# words into the model's text stream.
 dataset:
   _target_: espnet3.components.data.data_organizer.DataOrganizer
   _recursive_: false

@@ -1,0 +1,25 @@
+##########################################################
+#           OTOSPEECH FULL-DUPLEX TRAINING SETTING       #
+##########################################################
+# Merged over egs3/TEMPLATE/duplex/conf/training.yaml, which fine-tunes the
+# released Moshi in full with kyutai's moshi-finetune settings and FSDP.
+#
+# Quick usage (create_dataset transcribes with NeMo, on a GPU node):
+#   python run.py --stages create_dataset train --training_config conf/training.yaml
+#
+# 100 s windows of the otoSpeech sessions; each speaker takes the model's
+# side in turn (dataset/dataset.py).
+
+dataset:
+  train:
+    - name: train
+      data_src_args:
+        split: train
+        recipe_dir: ${recipe_dir}
+        duration: 100.0
+  valid:
+    - name: valid
+      data_src_args:
+        split: valid
+        recipe_dir: ${recipe_dir}
+        duration: 100.0

@@ -1,0 +1,13 @@
+builder:
+  # otoSpeech-full-duplex-processed-141h (otoearth, CC BY 4.0), pinned. Gated:
+  # request access on its Hugging Face page with the account you log in with.
+  hf_repo: otoearth/otoSpeech-full-duplex-processed-141h
+  revision: c635c29ad083570fe2cadbafc75770e76eded2da
+  shards: 61
+  download_dir: downloads/otospeech
+  # Word timestamps of each channel, as Full-Duplex-Bench transcribes.
+  asr_model: nvidia/parakeet-tdt-0.6b-v2
+  # Mimi's rate; the audio is resampled once, when the dataset is built.
+  sample_rate: 24000
+  # The corpus has no official split: the last sessions (by id) validate.
+  valid_sessions: 6

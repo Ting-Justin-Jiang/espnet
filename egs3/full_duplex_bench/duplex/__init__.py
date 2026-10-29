@@ -1,1 +1,1 @@
-"""Full-Duplex-Bench recipe for Moshi."""
+"""Full-Duplex-Bench recipe for Moshi and PersonaPlex."""

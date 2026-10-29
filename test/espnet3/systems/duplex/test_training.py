@@ -8,6 +8,7 @@ import torch
 from safetensors.torch import save_file
 
 from espnet2.train.collate_fn import CommonCollateFn
+from espnet3.contract.kinds.audio import Audio
 from espnet3.systems.duplex.inference import DuplexInference
 from espnet3.systems.duplex.src.lm import (
     END_OF_TEXT_PADDING_ID,
@@ -54,14 +55,19 @@ def text_stream(tiny_tokenizer):
     return TextStream(None, None, str(tiny_tokenizer), sample_rate=800, frame_rate=12.5)
 
 
+def _word(text, start, end):
+    """One word as a ``segments`` entry."""
+    return {"text": text, "start": start, "end": end}
+
+
 def _batch(text_stream, frames):
     """Collate one random conversation window per entry of ``frames``."""
     rng = np.random.default_rng(0)
     items = []
     for index, num_frames in enumerate(frames):
         sample = {
-            "speech": rng.uniform(-0.5, 0.5, (num_frames * FRAME, 2)),
-            "words": [("ghi", 0.1, 0.3), ("de", 0.4, 0.6)],
+            "speech": Audio(rng.uniform(-0.5, 0.5, (num_frames * FRAME, 2)), 800),
+            "words": [_word("ghi", 0.1, 0.3), _word("de", 0.4, 0.6)],
         }
         items.append((str(index), text_stream(sample)))
     _, batch = CommonCollateFn(int_pad_value=-1)(items)
@@ -78,24 +84,28 @@ def test_text_stream_places_words_on_frames(text_stream):
     ghi, de, jkl = encode("ghi"), encode("de"), encode("jkl")
     assert TEXT_PADDING_ID not in ghi + de + jkl
     sample = {
-        "speech": np.zeros((12 * FRAME, 2)),
+        "speech": Audio(np.zeros((12 * FRAME, 2), dtype=np.float32), 800),
         "words": [
-            ("de", 0.35, 0.6),
-            ("ghi", 0.1, 0.4),
-            ("f", 0.7, 0.7),
-            ("jkl", 0.7, 0.9),
+            _word("de", 0.35, 0.6),
+            _word("ghi", 0.1, 0.4),
+            _word("f", 0.7, 0.7),
+            _word("jkl", 0.7, 0.9),
         ],
     }
     out = text_stream(sample)
     epad = END_OF_TEXT_PADDING_ID
     assert out["text"].tolist() == [epad, *ghi[:3], *de, epad, *jkl]
     assert out["speech"].dtype == np.float32
+    assert out["speech"].shape == (12 * FRAME, 2)
 
 
-def test_text_stream_refuses_channel_first_audio(text_stream):
-    """[2, N] audio would be read as N two-sample frames."""
-    with pytest.raises(ValueError, match=r"speech must be \[N, 2\]"):
-        text_stream({"speech": np.zeros((2, 12 * FRAME)), "words": []})
+def test_text_stream_refuses_other_rates_and_mono(text_stream):
+    """A recording at another rate would be read at the wrong speed."""
+    stereo = np.zeros((12 * FRAME, 2), dtype=np.float32)
+    with pytest.raises(ValueError, match="2 channels at 800 Hz, got 2 at 1600"):
+        text_stream({"speech": Audio(stereo, 1600), "words": []})
+    with pytest.raises(ValueError, match="got 1 at 800"):
+        text_stream({"speech": Audio(stereo[:, 0], 800), "words": []})
 
 
 def test_training_step_trains_the_language_model_only(model, text_stream):

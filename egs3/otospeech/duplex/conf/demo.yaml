@@ -1,0 +1,12 @@
+##########################################################
+#           OTOSPEECH FULL-DUPLEX DEMO SETTING           #
+##########################################################
+# Merged over egs3/TEMPLATE/duplex/conf/demo.yaml: talk to the fine-tuned
+# model of exp/<exp_tag>/model_pack through the browser microphone.
+#
+# Quick usage (after pack_model):
+#   python run.py --stages pack_demo --training_config conf/training.yaml \
+#       --demo_config conf/demo.yaml
+
+ui:
+  title: otoSpeech fine-tuned Moshi
