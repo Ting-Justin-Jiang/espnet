@@ -41,15 +41,33 @@ parallel:
 ##########################################################
 #                 INPUT / OUTPUT SETTING                 #
 ##########################################################
-# Each test item gives the user's audio as `speech` (mono, 24 kHz). One
-# conversation is run per item, so batch_size stays unset.
+# One conversation is run per test item, so batch_size stays unset. The
+# contract checks what goes in and out of the model:
+# - `speech`: the user's audio, mono at Mimi's 24 kHz. A test set resamples
+#   it with the resampler its benchmark prescribes, so a different rate is
+#   refused (`rate_policy: reject`) rather than silently resampled again.
+# - `wav`: the model's channel, frame-aligned with `speech`, written as a wav
+#   file; `text`: its inner monologue; `step_ms`: the median frame time.
 input_key: speech
 batch_size:
-output_fn: egs3.TEMPLATE.duplex.src.inference.build_output
-output_artifacts:
-  wav:
-    type: wav
-    sample_rate: 24000
+contract:
+  inputs:
+    speech:
+      kind: audio
+      label: User audio
+      sample_rate: 24000
+      rate_policy: reject
+      channels: 1
+  outputs:
+    wav:
+      kind: audio
+      label: Model audio
+    text:
+      kind: text
+      label: Inner monologue
+    step_ms:
+      kind: number
+      label: Median frame time (ms)
 
 provider:
   _target_: espnet3.systems.base.inference_provider.InferenceProvider

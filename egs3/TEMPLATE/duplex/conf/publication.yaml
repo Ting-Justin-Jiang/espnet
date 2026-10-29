@@ -1,0 +1,45 @@
+##########################################################
+#                  PUBLICATION SETTING                   #
+##########################################################
+# Quick usage:
+#   python run.py --stages pack_model upload_model \
+#       --training_config conf/training.yaml \
+#       --inference_config conf/inference.yaml \
+#       --publication_config conf/publication.yaml
+#
+# Shared default merged under every duplex recipe's publication config.
+# `pack_model` bundles the inference config with the experiment directory,
+# which holds the averaged checkpoint the inference config reads as
+# `model.lm_checkpoint`. Mimi and the text tokenizer are the released ones,
+# downloaded from the model block's `hf_repo` when the bundle is loaded.
+# Pass --inference_config: the demo loads the bundle through InferenceModel.
+
+recipe_dir: .
+exp_tag: ${self_name:}
+exp_dir: exp/${exp_tag}
+inference_dir: ${exp_dir}/inference
+data_dir: ${recipe_dir}/data
+
+pack_model:
+  out_dir: ${exp_dir}/model_pack
+  allow_overwrite: false
+  inference_dir: ${inference_dir}
+  include_model_detail: false
+  readme: ${config_path:../src/hf_model_readme.md}
+  include: []
+  exclude:
+    # Lightning checkpoints hold the whole FSDP training state; inference
+    # reads the averaged .pth.
+    - "*.ckpt"
+    - inference
+    - inference_*
+    - "**/*.log"
+    - "**/tensorboard/**"
+
+upload_model:
+  hf_repo: espnet/${set_corpus_and_system:}_${exp_tag}
+  private: false
+  # update: false (default) raises an error if the repo already exists.
+  update: false
+  delete_patterns:
+    - "*"

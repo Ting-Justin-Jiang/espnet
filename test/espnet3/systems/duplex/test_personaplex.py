@@ -7,6 +7,7 @@ import pytest
 import torch
 from safetensors.torch import save_file
 
+from espnet3.contract.kinds.audio import Audio
 from espnet3.systems.duplex.inference import DuplexInference
 from espnet3.systems.duplex.src.lm import LMModel
 from espnet3.systems.duplex.src.mimi import MimiModel
@@ -173,7 +174,7 @@ def test_personaplex_conversation(tiny_personaplex, monkeypatch):
     monkeypatch.setattr(module, "PROMPT_SILENCE_FRAMES", 1)
     speech = (0.1 * np.random.default_rng(0).standard_normal(64 * 3)).astype(np.float32)
     with pytest.raises(ValueError, match="needs a role prompt"):
-        tiny_personaplex(speech)
-    out = tiny_personaplex(speech, role_prompt="abc")
+        tiny_personaplex(Audio(speech, 800))
+    out = tiny_personaplex(Audio(speech, 800), role_prompt="abc")
     assert out["wav"].shape == speech.shape
     assert np.isfinite(out["wav"]).all()

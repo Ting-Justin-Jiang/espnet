@@ -1,9 +1,11 @@
-"""Full-duplex Moshi demo: talk with Moshi through the browser microphone.
+"""Full-duplex demo: talk with the model through the browser microphone.
 
-The browser streams the microphone to this app over the Gradio connection.
-Each chunk is resampled to 24 kHz and cut into 80 ms frames; every frame goes
-through ``DuplexInference.step``, which returns Moshi's next 80 ms, streamed
-back to the browser. Moshi keeps listening while it speaks, so the user can
+The demo session loads the packed model through ``InferenceModel``; its
+backend is the ``DuplexInference`` this app drives frame by frame. The
+browser streams the microphone over the Gradio connection. Each chunk is
+resampled to 24 kHz and cut into 80 ms frames; every frame goes through
+``DuplexInference.step``, which returns the model's next 80 ms, streamed back
+to the browser. The model keeps listening while it speaks, so the user can
 interrupt it or back-channel. One conversation runs at a time: the model's
 stream state lives on the GPU, so the start, stream and stop events share one
 queue of size one.
@@ -21,13 +23,10 @@ from pathlib import Path
 import gradio as gr
 import numpy as np
 import soxr
-from hydra.utils import instantiate
-from omegaconf import OmegaConf
 
-from espnet3.publication.demo.assets import DEFAULT_UI_ASSETS, UIAsset
-from espnet3.publication.demo.session import DemoSession
+from espnet3.publication.demo.assets import UIAsset
+from espnet3.publication.demo.session import load_demo_session
 from espnet3.systems.duplex.inference import DuplexInference
-from espnet3.utils.config_utils import load_config_with_defaults
 from espnet3.utils.logging_utils import configure_logging
 
 logger = logging.getLogger(__name__)
@@ -37,6 +36,9 @@ logger = logging.getLogger(__name__)
 #: hundred milliseconds; running them before the microphone audio keeps that
 #: stall out of the reply stream, where it would delay every later reply.
 WARMUP_FRAMES = 2
+
+#: The demo config's output keys, in the order a conversation returns them.
+OUTPUT_KEYS = ["wav", "text"]
 
 
 class MicrophoneStreamUI(UIAsset):
@@ -60,10 +62,10 @@ class AudioStreamUI(UIAsset):
 
 
 class DuplexConversation:
-    """One live conversation between the browser microphone and Moshi.
+    """One live conversation between the browser microphone and the model.
 
     Args:
-        model: The Moshi engine, shared by the conversations one at a time.
+        model: The duplex engine, shared by the conversations one at a time.
         role_prompt: PersonaPlex's role prompt, the same for every
             conversation; ``None`` for Moshi.
     """
@@ -81,8 +83,8 @@ class DuplexConversation:
     def start(self) -> None:
         """Begin a conversation, closing one the browser left open.
 
-        Moshi's stream starts ``WARMUP_FRAMES`` frames of silence before the
-        microphone's; their replies go out with the first microphone chunk.
+        The model's stream starts ``WARMUP_FRAMES`` frames of silence before
+        the microphone's; their replies go out with the first microphone chunk.
         """
         if self.model.is_streaming:
             self.model.stop()
@@ -103,18 +105,19 @@ class DuplexConversation:
         if self.model.is_streaming:
             self.model.stop()
 
-    def __call__(self, *, speech) -> dict:
-        """Feed one microphone chunk and return Moshi's reply to it.
+    def __call__(self, speech) -> tuple:
+        """Feed one microphone chunk and return the model's reply to it.
 
         Args:
             speech: ``(sample_rate, samples)`` from the microphone, int16 or
                 float, mono or multi-channel.
 
         Returns:
-            ``wav``: ``(24000, int16 samples)`` Moshi produced for the complete
-            frames received, or ``None`` when no frame was completed; ``text``:
-            the inner monologue so far. The samples are int16 because Gradio
-            rescales float audio by each chunk's own peak.
+            In ``OUTPUT_KEYS`` order, ``wav``: ``(24000, int16 samples)`` the
+            model produced for the complete frames received, or ``None`` when
+            no frame was completed; ``text``: the inner monologue so far. The
+            samples are int16 because Gradio rescales float audio by each
+            chunk's own peak.
         """
         rate, samples = speech
         if samples.ndim > 1:
@@ -142,19 +145,11 @@ class DuplexConversation:
             self.replies.append(pcm)
             self.text += piece
         if not self.replies:
-            return {"wav": None, "text": self.text.strip()}
+            return None, self.text.strip()
         reply = np.clip(np.concatenate(self.replies), -1.0, 1.0)
         self.replies = []
         reply = (reply * 32767).astype(np.int16)
-        return {"wav": (self.model.sample_rate, reply), "text": self.text.strip()}
-
-
-def build_model(model_config) -> DuplexInference:
-    """Build the Moshi engine the demo config's ``model`` block describes."""
-    arguments = OmegaConf.to_container(model_config, resolve=True)
-    # Recorded for pack_demo; the weights come from the block's hf_repo.
-    del arguments["dir_or_tag"]
-    return instantiate(arguments)
+        return (self.model.sample_rate, reply), self.text.strip()
 
 
 def build_demo(demo_dir: Path, demo_config_path: Path | None = None):
@@ -162,16 +157,17 @@ def build_demo(demo_dir: Path, demo_config_path: Path | None = None):
     demo_dir = Path(demo_dir).resolve()
     if demo_config_path is None:
         demo_config_path = demo_dir / "demo.yaml"
-    config = load_config_with_defaults(str(demo_config_path))
-    conversation = DuplexConversation(build_model(config.model), config.role_prompt)
+    session = load_demo_session(demo_dir, demo_config_path)
+    output_keys = [spec["key"] for spec in session.output_specs]
+    if output_keys != OUTPUT_KEYS:
+        raise ValueError(f"Demo outputs must be {OUTPUT_KEYS}, got {output_keys}.")
+    session.registry.register("microphone_stream", MicrophoneStreamUI)
+    session.registry.register("audio_stream", AudioStreamUI)
+    # session.model is the InferenceModel of the packed model; its backend
+    # runs the conversation one frame at a time.
+    conversation = DuplexConversation(session.model.model, session.demo_cfg.role_prompt)
 
-    registry = DEFAULT_UI_ASSETS.clone()
-    registry.register("microphone_stream", MicrophoneStreamUI)
-    registry.register("audio_stream", AudioStreamUI)
-    session = DemoSession(demo_dir, config, conversation, registry)
-    respond = session.create_inference_fn(session.input_specs, session.output_specs)
-
-    with gr.Blocks(title=session.title or "Moshi") as app:
+    with gr.Blocks(title=session.title) as app:
         if session.title:
             gr.Markdown(f"# {session.title}")
         with gr.Row():
@@ -181,26 +177,26 @@ def build_demo(demo_dir: Path, demo_config_path: Path | None = None):
             gr.Markdown(session.description)
         # One queue for the three events: one conversation at a time.
         microphone.start_recording(
-            conversation.start, concurrency_id="moshi", concurrency_limit=1
+            conversation.start, concurrency_id="duplex", concurrency_limit=1
         )
         # One chunk per frame keeps the reply's added delay at one frame.
         microphone.stream(
-            respond,
+            conversation,
             inputs=[microphone],
             outputs=outputs,
             stream_every=0.08,
-            concurrency_id="moshi",
+            concurrency_id="duplex",
             concurrency_limit=1,
         )
         microphone.stop_recording(
-            conversation.stop, concurrency_id="moshi", concurrency_limit=1
+            conversation.stop, concurrency_id="duplex", concurrency_limit=1
         )
     return app
 
 
 def main() -> None:
     """Launch the packed demo."""
-    parser = argparse.ArgumentParser(description="Launch the Moshi duplex demo.")
+    parser = argparse.ArgumentParser(description="Launch the full-duplex demo.")
     parser.add_argument(
         "--demo-dir",
         type=Path,

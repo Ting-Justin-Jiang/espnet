@@ -41,6 +41,7 @@ from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
+from espnet3.contract.kinds.audio import Audio
 from espnet3.systems.duplex.src.cuda_graph import CUDAGraphed
 from espnet3.systems.duplex.src.lm import (
     END_OF_TEXT_PADDING_ID,
@@ -232,7 +233,7 @@ class DuplexInference:
             return pcm, ""
         return pcm, self.tokenizer.id_to_piece(text_token).replace("\u2581", " ")
 
-    def __call__(self, speech: np.ndarray, role_prompt: str | None = None) -> dict:
+    def __call__(self, speech: Audio, role_prompt: str | None = None) -> dict:
         """Run a whole conversation over a recorded user stream.
 
         Args:
@@ -242,13 +243,22 @@ class DuplexInference:
         Returns:
             ``wav``: Moshi's audio, as long as ``speech`` and frame-aligned
             with it; ``text``: Moshi's inner-monologue text; ``step_ms``:
-            median wall-clock time of a frame (real time requires under 80 ms).
-            The median leaves out the first frames, which also capture the
-            CUDA graphs.
+            median wall-clock time of a frame (real time requires under 80 ms),
+            which the first frames, slower as they capture the CUDA graphs,
+            do not move.
+
+        Raises:
+            ValueError: If ``speech`` is not mono at ``sample_rate``.
         """
-        num_frames = math.ceil(len(speech) / self.frame_size)
+        if speech.rate != self.sample_rate or speech.channels != 1:
+            raise ValueError(
+                f"Expected mono audio at {self.sample_rate} Hz, got "
+                f"{speech.channels} channel(s) at {speech.rate} Hz."
+            )
+        samples = speech.array
+        num_frames = math.ceil(len(samples) / self.frame_size)
         padded = np.zeros(num_frames * self.frame_size, dtype=np.float32)
-        padded[: len(speech)] = speech
+        padded[: len(samples)] = samples
         pcms = []
         pieces = []
         seconds = []
@@ -262,7 +272,7 @@ class DuplexInference:
             pieces.append(piece)
         self.stop()
         return {
-            "wav": np.concatenate(pcms)[: len(speech)],
+            "wav": np.concatenate(pcms)[: len(samples)],
             "text": "".join(pieces).strip(),
             "step_ms": 1000.0 * float(np.median(seconds)),
         }

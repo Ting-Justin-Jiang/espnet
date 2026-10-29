@@ -1,4 +1,4 @@
-"""Tests for the Moshi duplex demo app, driven by a simulated microphone."""
+"""Tests for the duplex demo app, driven by a simulated microphone."""
 
 import importlib.util
 from types import SimpleNamespace
@@ -8,6 +8,7 @@ from omegaconf import OmegaConf
 
 from egs3.TEMPLATE.duplex.src.app import WARMUP_FRAMES, DuplexConversation
 from espnet3.publication.demo.packing import pack_demo
+from espnet3.publication.demo.session import load_demo_session
 from espnet3.utils.config_utils import load_and_merge_config
 
 
@@ -58,9 +59,9 @@ def test_chunks_become_frames_and_replies():
     samples = _microphone(1.0)
     replies = []
     for start in range(0, len(samples), 3000):
-        out = conversation(speech=(48000, samples[start : start + 3000]))
-        if out["wav"] is not None:
-            rate, reply = out["wav"]
+        wav, text = conversation((48000, samples[start : start + 3000]))
+        if wav is not None:
+            rate, reply = wav
             assert rate == 24000 and reply.dtype == np.int16
             replies.append(reply)
     conversation.stop()
@@ -70,7 +71,7 @@ def test_chunks_become_frames_and_replies():
     assert not np.any(np.concatenate(model.frames[:WARMUP_FRAMES]))
     expected = (0.5 * np.concatenate(model.frames) * 32767).astype(np.int16)
     np.testing.assert_array_equal(np.concatenate(replies), expected)
-    assert out["text"] == "a" * (WARMUP_FRAMES + 12)
+    assert text == "a" * (WARMUP_FRAMES + 12)
 
 
 def test_no_reply_until_a_frame_completes():
@@ -78,9 +79,9 @@ def test_no_reply_until_a_frame_completes():
     model = _HalfEcho()
     conversation = DuplexConversation(model, None)
     conversation.start()
-    conversation(speech=(48000, _microphone(0.2)))
-    out = conversation(speech=(48000, _microphone(0.01)))
-    assert out["wav"] is None
+    conversation((48000, _microphone(0.2)))
+    wav, _ = conversation((48000, _microphone(0.01)))
+    assert wav is None
 
 
 def test_chunking_does_not_change_what_moshi_hears():
@@ -92,7 +93,7 @@ def test_chunking_does_not_change_what_moshi_hears():
         conversation = DuplexConversation(model, None)
         conversation.start()
         for start in range(0, len(samples), chunk):
-            conversation(speech=(48000, samples[start : start + chunk]))
+            conversation((48000, samples[start : start + chunk]))
         heard.append(np.concatenate(model.frames[WARMUP_FRAMES:]))
     np.testing.assert_allclose(heard[0], heard[1], atol=1e-6)
     expected = np.sin(2 * np.pi * 220 * np.arange(len(heard[0])) / 24000)
@@ -107,7 +108,7 @@ def test_restart_closes_the_open_conversation():
     model = _HalfEcho()
     conversation = DuplexConversation(model, None)
     conversation.start()
-    conversation(speech=(48000, _microphone(0.2)))
+    conversation((48000, _microphone(0.2)))
     conversation.start()
     assert model.is_streaming
     # Only the new conversation's warm-up frames are left.
@@ -115,13 +116,19 @@ def test_restart_closes_the_open_conversation():
 
 
 def test_packed_demo_builds(tmp_path, monkeypatch):
-    """pack_demo writes a runnable app whose UI follows demo.yaml."""
+    """pack_demo writes a runnable app that drives the packed model's backend.
+
+    The packed model itself is loaded by ``InferenceModel``; here a stand-in
+    with the same ``model`` attribute replaces it.
+    """
     user_config = tmp_path / "demo.yaml"
     OmegaConf.save(
         OmegaConf.create(
             {
+                "exp_tag": "demo_test",
+                "role_prompt": "You enjoy having a good conversation.",
                 "upload_demo": {"hf_repo": "owner/demo"},
-                "ui": {"description": None, "title": "Talk to Moshi"},
+                "ui": {"description": None, "title": "Talk to the model"},
                 "pack": {"out_dir": str(tmp_path / "demo")},
             }
         ),
@@ -132,20 +139,25 @@ def test_packed_demo_builds(tmp_path, monkeypatch):
     )
     out = pack_demo(SimpleNamespace(demo_config=config, exp_dir=None))
     packed = OmegaConf.load(out / "demo.yaml")
-    assert packed.model.hf_repo == "kyutai/moshiko-pytorch-bf16"
-    assert packed.model.dir_or_tag == "kyutai/moshiko-pytorch-bf16"
+    assert packed.model.dir_or_tag.endswith("exp/demo_test/model_pack")
 
-    spec = importlib.util.spec_from_file_location("packed_moshi_app", out / "app.py")
+    spec = importlib.util.spec_from_file_location("packed_duplex_app", out / "app.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    seen = {}
+    backend = _HalfEcho()
+    packed_model = SimpleNamespace(model=backend, contract=None)
 
-    def fake_build_model(model_config):
-        seen["target"] = model_config["_target_"]
-        return _HalfEcho()
+    def load_with_stand_in(demo_dir, demo_config_path):
+        return load_demo_session(demo_dir, demo_config_path, model=packed_model)
 
-    monkeypatch.setattr(module, "build_model", fake_build_model)
+    monkeypatch.setattr(module, "load_demo_session", load_with_stand_in)
     ui = module.build_demo(out)
-    assert seen["target"] == "espnet3.systems.duplex.inference.DuplexInference"
     labels = {getattr(block, "label", None) for block in ui.blocks.values()}
-    assert {"You (microphone)", "Moshi", "Moshi's inner monologue"} <= labels
+    assert {"You (microphone)", "Model", "Inner monologue"} <= labels
+    start = next(
+        dep
+        for dep in ui.config["dependencies"]
+        if dep["targets"][0][1] == "start_recording"
+    )
+    ui.fns[start["id"]].fn()
+    assert backend.role_prompt == "You enjoy having a good conversation."

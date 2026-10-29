@@ -41,6 +41,7 @@ from scipy.spatial.distance import jensenshannon
 from silero_vad import get_speech_timestamps, load_silero_vad
 
 from espnet3.components.metrics.base_metric import BaseMetric
+from espnet3.contract import Field
 
 #: How each task is scored.
 TASK_RULES = {
@@ -92,8 +93,18 @@ class FullDuplexBench(BaseMetric):
         device: Device of the ASR.
     """
 
-    inputs = {"wav": str, "task": str, "annotation": str, "sample_id": str}
-    outputs = ("TOR", "latency", "backchannel_freq", "backchannel_jsd")
+    inputs = (
+        Field("wav", "audio"),
+        Field("task", "text"),
+        Field("annotation", "text"),
+        Field("sample_id", "text"),
+    )
+    outputs = (
+        Field("TOR", "number"),
+        Field("latency", "number"),
+        Field("backchannel_freq", "number"),
+        Field("backchannel_jsd", "number"),
+    )
 
     def __init__(self, asr_model: str, backchannel_reference: str, device: str):
         """Load the ASR, the VAD and the backchannel reference."""

@@ -14,28 +14,35 @@ architecture and fine-tunes them; each model is a block under `conf/model/`:
 
 ## Stages
 
-A benchmark recipe runs released models (`DuplexEvaluationSystem`):
+A benchmark recipe scores released models (`DuplexEvaluationSystem`), as
+egs2 benchmark recipes decode with `--skip_train true --download_model`: one
+inference config per model, each with its own `exp_tag`.
 
 ```bash
-python run.py --stages create_dataset infer --inference_config conf/inference.yaml
-python run.py --stages measure \
+python run.py --stages create_dataset infer measure \
     --inference_config conf/inference.yaml --metrics_config conf/metrics.yaml
-python run.py --stages pack_demo --demo_config conf/demo.yaml
 ```
 
-A fine-tuning recipe trains first (`DuplexSystem`, see Fine-tuning):
+A fine-tuning recipe trains, then publishes the model and its demo
+(`DuplexSystem`, see Fine-tuning):
 
 ```bash
-python run.py --stages create_dataset train --training_config conf/training.yaml
-python run.py --stages infer measure --training_config conf/training.yaml \
-    --inference_config conf/inference.yaml --metrics_config conf/metrics.yaml
+python run.py --stages create_dataset train infer measure \
+    --training_config conf/training.yaml --inference_config conf/inference.yaml \
+    --metrics_config conf/metrics.yaml
+python run.py --stages pack_model pack_demo --training_config conf/training.yaml \
+    --inference_config conf/inference.yaml \
+    --publication_config conf/publication.yaml --demo_config conf/demo.yaml
 ```
 
 `create_dataset` prepares the datasets of the training config, or the test
-sets of the inference config in a benchmark recipe. `infer` runs
-one conversation per test item and writes the model's channel
-(`<inference_dir>/<test>/wav/*.wav`), its inner monologue (`text.scp`) and the
-mean wall-clock time of a frame (`step_ms.scp`). `measure` scores them;
+sets of the inference config in a benchmark recipe. `infer` runs one
+conversation per test item. The inference config's `contract` checks what
+goes in and out: the user's audio must be mono at 24 kHz (a test set
+resamples it with its benchmark's resampler, so another rate is refused
+rather than resampled again), and the outputs are the model's channel
+(`<inference_dir>/<test>/wav.scp`), its inner monologue (`text.scp`) and the
+median wall-clock time of a frame (`step_ms.scp`). `measure` scores them;
 `StepTime` reports the frame time against the 80 ms real-time budget.
 
 ## The model
@@ -74,8 +81,8 @@ Two choices matter for experiments:
   25 ms. The output is identical either way; only live serving needs the
   graphs.
 
-The model block is composed under `model:` by the inference and demo configs
-(`defaults: [model: moshiko]`). Another released Moshi, such as
+The model block is composed under `model:` by the inference and training
+configs (`defaults: [model: moshiko]`). Another released Moshi, such as
 `kyutai/moshika-pytorch-bf16`, is a copy of `moshiko.yaml` with its repository
 and revision.
 
@@ -134,19 +141,24 @@ Full-Duplex-Bench.
 
 ## Talking to it with a microphone
 
-`pack_demo` writes a Gradio app (`src/app.py`) with `demo.yaml` into
-`exp/<exp_tag>/demo/`.
-The browser streams the microphone to the app; the app resamples each chunk
-to 24 kHz with a streaming resampler, feeds every complete frame to
-`DuplexInference.step` and streams Moshi's frames back. It is the same `step`
-the `infer` stage uses. One conversation runs at a time.
+`pack_model` bundles the inference config with the experiment directory
+(`exp/<exp_tag>/model_pack`); `pack_demo` writes a Gradio app (`src/app.py`)
+with `demo.yaml` into `exp/<exp_tag>/demo/`, pointing at that bundle. The app
+loads the bundle through `load_demo_session`, that is through
+`InferenceModel`, as every ESPnet3 demo does, and drives its
+`DuplexInference` frame by frame: the browser streams the microphone to the
+app, which resamples each chunk to 24 kHz with a streaming resampler, feeds
+every complete frame to `DuplexInference.step` and streams the model's frames
+back. It is the same `step` the `infer` stage uses. One conversation runs at a
+time; a PersonaPlex demo opens each with the demo config's `role_prompt`.
 
 On a cluster, run the app on a GPU node and reach it through SSH:
 
 ```bash
-# on the GPU node (inside an interactive job)
-python run.py --stages pack_demo --demo_config conf/demo.yaml
-python exp/moshiko/demo/app.py --demo-dir exp/moshiko/demo --server-port 7860
+# on the GPU node (inside an interactive job), after pack_model
+python run.py --stages pack_demo --training_config conf/training.yaml \
+    --demo_config conf/demo.yaml
+python exp/<exp_tag>/demo/app.py --demo-dir exp/<exp_tag>/demo --server-port 7860
 
 # on your laptop: forward the port through the login node to the GPU node
 ssh -N -L 7860:localhost:7860 -J <user>@<login-node> <user>@<gpu-node>
@@ -163,5 +175,5 @@ tunnel is enough; a WebRTC client would need UDP, which SSH does not forward.
 Each microphone chunk is one frame (`stream_every=0.08`); the network and the
 browser add latency on top of Moshi's own.
 
-`upload_demo` publishes the packed app as a Hugging Face Space; Moshi needs a
-GPU Space to run in real time.
+`upload_demo` publishes the packed app as a Hugging Face Space; the model
+needs a GPU Space to run in real time.

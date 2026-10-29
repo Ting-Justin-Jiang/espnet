@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import soundfile as sf
 import torch
 import torchaudio
@@ -16,13 +15,16 @@ from egs3.full_duplex_bench.duplex.dataset.builder import (
     sample_dirs,
 )
 from espnet3.components.data.base_dataset import BaseDataset
+from espnet3.contract import Field
+from espnet3.contract.kinds.audio import Audio
 
 
 class FullDuplexBenchDataset(BaseDataset):
     """Samples of one Full-Duplex-Bench v1.0 task, in sample-id order.
 
     The user's audio is resampled to ``sample_rate`` with the same
-    ``torchaudio`` resampler the benchmark's Moshi client uses.
+    ``torchaudio`` resampler the benchmark's Moshi client uses, and returned
+    as an :class:`Audio` that carries its rate.
 
     Args:
         task: Task directory name, such as ``candor_turn_taking``.
@@ -39,14 +41,14 @@ class FullDuplexBenchDataset(BaseDataset):
         ['annotation', 'role_prompt', 'sample_id', 'speech', 'task', 'utt_id']
     """
 
-    fields = {
-        "utt_id": str,
-        "speech": np.ndarray,
-        "task": str,
-        "sample_id": str,
-        "annotation": str,
-        "role_prompt": str,
-    }
+    fields = (
+        Field("utt_id", "text"),
+        Field("speech", "audio", channels=1),
+        Field("task", "text"),
+        Field("sample_id", "text"),
+        Field("annotation", "text"),
+        Field("role_prompt", "text"),
+    )
 
     def __init__(self, task: str, recipe_dir: str | Path, sample_rate: int) -> None:
         """List the task's sample directories."""
@@ -82,7 +84,7 @@ class FullDuplexBenchDataset(BaseDataset):
             annotation = str((sample_dir / self.annotation).resolve())
         return {
             "utt_id": f"{self.task}-{sample_dir.name}",
-            "speech": speech,
+            "speech": Audio(speech, self.sample_rate),
             "task": self.task,
             "sample_id": sample_dir.name,
             "annotation": annotation,

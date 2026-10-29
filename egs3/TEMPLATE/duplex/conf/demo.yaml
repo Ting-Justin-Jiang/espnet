@@ -1,32 +1,26 @@
 ##########################################################
 #                    DEMO PACK SETTING                   #
 ##########################################################
-# Quick usage:
+# Quick usage (after pack_model, on a GPU node for the app):
 #   python run.py --stages pack_demo   --demo_config conf/demo.yaml
-#   python exp/moshiko/demo/app.py --demo-dir exp/moshiko/demo   # on a GPU
+#   python exp/<exp_tag>/demo/app.py --demo-dir exp/<exp_tag>/demo
 #   python run.py --stages upload_demo --demo_config conf/demo.yaml
 #
 # A full-duplex conversation through the browser microphone: the browser
-# streams the microphone to the app, which feeds Moshi one 80 ms frame at a
-# time and streams Moshi's voice and text back. See the system README for
+# streams the microphone to the app, which feeds the model one 80 ms frame at
+# a time and streams its voice and text back. See the system README for
 # serving it from a cluster node.
 
-defaults:
-  # The released Moshi, conf/model/moshiko.yaml, under `model`.
-  - model: moshiko
-  - _self_
-
 recipe_dir: .
-exp_tag: moshiko
-exp_dir: ${recipe_dir}/exp/${exp_tag}
 
 ##########################################################
 #                    MODEL SOURCE                        #
 ##########################################################
-# The weights are downloaded from the Hub repository the model block names;
-# `dir_or_tag` records it for pack_demo and is not a model argument.
+# `model.dir_or_tag` selects the packed model the demo loads through
+# InferenceModel: the `pack_model` output (default), or a Hugging Face repo
+# holding one. `launch()` fills in exp_tag from the training config.
 model:
-  dir_or_tag: ${model.hf_repo}
+  dir_or_tag: exp/${exp_tag}/model_pack
   device: cuda
 
 # PersonaPlex's role prompt, the same for every conversation of the demo (for
@@ -37,15 +31,17 @@ role_prompt:
 #                     UI DEFINITION                      #
 ##########################################################
 # `ui.app_script` is copied into the packed demo as `app.py`.
-# - `microphone_stream`: the user's microphone, streamed to Moshi
-# - `audio_stream`: Moshi's voice, streamed back
-# - `text`: Moshi's inner monologue so far
+# The conversation streams, so the UI is set here rather than generated from
+# the inference contract:
+# - `microphone_stream`: the user's microphone, streamed to the model
+# - `audio_stream`: the model's voice, streamed back
+# - `text`: the model's inner monologue so far
 ui:
   app_script: ${config_path:../src/app.py}
   title: ${set_corpus_and_system:} demo
   description: >-
-    Press record and talk. Moshi listens and speaks at the same time, so you
-    can interrupt it or back-channel while it talks. Use headphones: Moshi
+    Press record and talk. The model listens and speaks at the same time, so
+    you can interrupt it or back-channel while it talks. Use headphones: it
     hears whatever reaches your microphone, its own voice included.
   inputs:
     - key: speech
@@ -54,16 +50,16 @@ ui:
   outputs:
     - key: wav
       type: audio_stream
-      label: "Moshi"
+      label: "Model"
     - key: text
       type: text
-      label: "Moshi's inner monologue"
+      label: "Inner monologue"
 
 ##########################################################
 #                    PACKING SETTING                     #
 ##########################################################
 pack:
-  out_dir: ${exp_dir}/demo
+  out_dir: exp/${exp_tag}/demo
   include: []
   exclude: []
   requirements:

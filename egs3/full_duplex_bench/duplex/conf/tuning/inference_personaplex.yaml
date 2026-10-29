@@ -15,3 +15,8 @@ defaults:
 
 exp_tag: personaplex
 input_key: [speech, role_prompt]
+contract:
+  inputs:
+    role_prompt:
+      kind: text
+      label: Role prompt

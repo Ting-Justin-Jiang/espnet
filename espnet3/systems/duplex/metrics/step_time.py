@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Sequence
 
 from espnet3.components.metrics.base_metric import BaseMetric
+from espnet3.contract import Field
 
 #: Duration of one frame, in milliseconds.
 FRAME_MS = 80.0
@@ -25,8 +26,9 @@ class StepTime(BaseMetric):
         {'step_ms': 30.0, 'real_time_factor': 0.375}
     """
 
-    inputs = {"step_ms": str}
-    outputs = ("step_ms", "real_time_factor")
+    # The infer stage writes step_ms as text in its SCP file.
+    inputs = (Field("step_ms", "text"),)
+    outputs = (Field("step_ms", "number"), Field("real_time_factor", "number"))
 
     def __init__(self) -> None:
         """Register the per-conversation times."""
